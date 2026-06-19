@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { Plus, Folder, Users, Clock, MoreHorizontal, TrendingUp, CheckCircle2, Circle, Zap, ArrowUpRight } from 'lucide-react';
-import { PROJECTS, TASKS, SPRINTS, USERS, Project } from '../data/mockData';
+import { CURRENT_USER, PROJECTS, TASKS, SPRINTS, USERS, WORKSPACE, Project } from '../data/store';
+import { createProject } from '../api/client';
 
 interface WorkspaceDashboardProps {
   onProjectSelect: (projectId: string) => void;
+  onCreateProject: () => void;
 }
 
 const AVATAR_COLORS = ['#5c5cf5', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
@@ -161,7 +163,7 @@ function ProjectCard({ project, onClick }: { project: Project; onClick: () => vo
   );
 }
 
-function EmptyState() {
+function EmptyState({ onCreate, canCreateProject }: { onCreate: () => void; canCreateProject: boolean }) {
   return (
     <div className="flex flex-col items-center justify-center py-24 text-center">
       {/* Illustration */}
@@ -181,24 +183,39 @@ function EmptyState() {
       </div>
       <h3 className="text-lg text-[var(--foreground)] mb-2">No projects yet</h3>
       <p className="text-sm text-[var(--muted-foreground)] max-w-xs leading-relaxed mb-6">
-        Create your first project to get started. The AI engine will begin analyzing your team's GitHub activity right away.
+        Create your first project to start organizing tasks, sprints, and team members.
       </p>
       <button
-        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm text-white transition-colors hover:opacity-90"
+        onClick={onCreate}
+        disabled={!canCreateProject}
+        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm text-white transition-colors hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
         style={{ background: 'var(--primary)' }}
       >
         <Plus size={14} />
-        Create first project
+        {canCreateProject ? 'Create first project' : 'Project creation restricted'}
       </button>
     </div>
   );
 }
 
-export function WorkspaceDashboard({ onProjectSelect }: WorkspaceDashboardProps) {
+export function WorkspaceDashboard({ onProjectSelect, onCreateProject }: WorkspaceDashboardProps) {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectKey, setNewProjectKey] = useState('');
   const [newProjectDesc, setNewProjectDesc] = useState('');
+  const [savingProject, setSavingProject] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const [, setRefreshKey] = useState(0);
+  const canCreateProject = CURRENT_USER.role === 'owner' || CURRENT_USER.role === 'pm';
+
+  const requestProjectCreate = () => {
+    if (canCreateProject) {
+      onCreateProject();
+      return;
+    }
+
+    setCreateError('Only workspace owners and PMs can create projects.');
+  };
 
   const totalTasks = TASKS.filter((t) => !t.isDeleted).length;
   const activeTasks = TASKS.filter((t) => t.status === 'InProgress' && !t.isDeleted).length;
@@ -213,15 +230,18 @@ export function WorkspaceDashboard({ onProjectSelect }: WorkspaceDashboardProps)
       >
         <div>
           <h1 className="text-base text-[var(--foreground)]">Workspace</h1>
-          <p className="text-xs text-[var(--muted-foreground)] mt-0.5">QuanTask HQ · {PROJECTS.length} projects</p>
+          <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+            {WORKSPACE.name || 'Workspace'} · {PROJECTS.length} projects
+          </p>
         </div>
         <button
-          onClick={() => setShowCreateModal(true)}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm text-white transition-colors hover:opacity-90"
+          onClick={requestProjectCreate}
+          disabled={!canCreateProject}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm text-white transition-colors hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
           style={{ background: 'var(--primary)' }}
         >
           <Plus size={13} />
-          New Project
+          {canCreateProject ? 'New Project' : 'Project creation restricted'}
         </button>
       </div>
 
@@ -254,7 +274,7 @@ export function WorkspaceDashboard({ onProjectSelect }: WorkspaceDashboardProps)
 
         {/* Projects grid */}
         {PROJECTS.length === 0 ? (
-          <EmptyState />
+          <EmptyState onCreate={requestProjectCreate} canCreateProject={canCreateProject} />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {PROJECTS.map((project) => (
@@ -285,6 +305,15 @@ export function WorkspaceDashboard({ onProjectSelect }: WorkspaceDashboardProps)
               </button>
             </div>
             <div className="p-6 space-y-4">
+              {createError && (
+                <div
+                  className="rounded-lg border px-3 py-2 text-xs"
+                  style={{ background: '#fef2f2', borderColor: '#fecaca', color: '#b91c1c' }}
+                >
+                  {createError}
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs text-[var(--muted-foreground)] mb-1.5">Project name</label>
                 <input
@@ -345,11 +374,35 @@ export function WorkspaceDashboard({ onProjectSelect }: WorkspaceDashboardProps)
                 Cancel
               </button>
               <button
-                onClick={() => setShowCreateModal(false)}
+                onClick={async () => {
+                  if (!newProjectName.trim()) return;
+                  setSavingProject(true);
+                  setCreateError('');
+
+                  try {
+                    const project = await createProject({
+                      workspaceId: WORKSPACE.id,
+                      name: newProjectName.trim(),
+                      key: newProjectKey.trim() || undefined,
+                      description: newProjectDesc.trim() || undefined,
+                    });
+                    setRefreshKey((key) => key + 1);
+                    setShowCreateModal(false);
+                    setNewProjectName('');
+                    setNewProjectKey('');
+                    setNewProjectDesc('');
+                    onProjectSelect(project.id);
+                  } catch (err) {
+                    setCreateError(err instanceof Error ? err.message : 'Unable to create project.');
+                  } finally {
+                    setSavingProject(false);
+                  }
+                }}
+                disabled={!newProjectName.trim() || savingProject}
                 className="px-4 py-2 rounded-lg text-sm text-white transition-colors hover:opacity-90"
                 style={{ background: 'var(--primary)' }}
               >
-                Create project
+                {savingProject ? 'Creating...' : 'Create project'}
               </button>
             </div>
           </div>

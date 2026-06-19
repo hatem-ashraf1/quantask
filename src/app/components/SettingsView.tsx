@@ -1,15 +1,43 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Save, AlertTriangle, Trash2, LogOut, Lock, Shield, X,
   ChevronRight, Users, Building2, Key, Check
 } from 'lucide-react';
-import { WORKSPACE, USERS, CURRENT_USER } from '../data/mockData';
+import { PROJECTS, WORKSPACE, USERS, CURRENT_USER, User } from '../data/store';
+import {
+  assignProjectMember,
+  deleteWorkspace,
+  deleteProject,
+  fetchProjectMembers,
+  fetchWorkspaceMembers,
+  leaveWorkspace,
+  removeProjectMember,
+  transferWorkspaceOwnership,
+  updateWorkspace,
+  updateWorkspaceMemberRole,
+} from '../api/client';
 
-function TransferOwnershipModal({ onClose }: { onClose: () => void }) {
+const ROLE_LABELS: Record<User['role'], string> = {
+  owner: 'Owner',
+  pm: 'Project Manager',
+  developer: 'Developer',
+  viewer: 'Viewer',
+};
+
+function secondaryMemberLabel(user: User) {
+  if (user.email) return user.email;
+  if (user.githubHandle?.startsWith('id:')) return `Owner ID: ${user.githubHandle.slice(3)}`;
+  if (user.githubHandle) return `@${user.githubHandle}`;
+  return 'No profile details returned';
+}
+
+function TransferOwnershipModal({ onClose, onTransfer }: { onClose: () => void; onTransfer: (userId: string) => Promise<void> }) {
   const [selectedUser, setSelectedUser] = useState('');
   const [confirm, setConfirm] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
-  const eligibleUsers = USERS.filter((u) => u.id !== CURRENT_USER.id && u.role !== 'viewer');
+  const eligibleUsers = USERS.filter((u) => u.id !== CURRENT_USER.id);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -36,6 +64,11 @@ function TransferOwnershipModal({ onClose }: { onClose: () => void }) {
           <div>
             <label className="block text-xs text-[var(--muted-foreground)] mb-1.5">Select new owner</label>
             <div className="space-y-2">
+              {eligibleUsers.length === 0 && (
+                <p className="rounded-lg border px-3 py-2 text-xs text-[var(--muted-foreground)]" style={{ borderColor: 'var(--border)' }}>
+                  Invite another member before transferring ownership.
+                </p>
+              )}
               {eligibleUsers.map((u) => (
                 <button
                   key={u.id}
@@ -75,18 +108,34 @@ function TransferOwnershipModal({ onClose }: { onClose: () => void }) {
               style={{ background: 'var(--input-background)', borderColor: 'var(--border)', color: 'var(--foreground)' }}
             />
           </div>
+          {error && (
+            <div className="rounded-lg border px-3 py-2 text-xs" style={{ background: '#fef2f2', borderColor: '#fecaca', color: '#b91c1c' }}>
+              {error}
+            </div>
+          )}
         </div>
         <div className="flex items-center justify-end gap-3 px-5 py-4 border-t" style={{ borderColor: 'var(--border)' }}>
           <button onClick={onClose} className="px-4 py-2 rounded-lg text-xs text-[var(--muted-foreground)] hover:bg-[var(--muted)]">
             Cancel
           </button>
           <button
-            disabled={!selectedUser || confirm !== WORKSPACE.name}
-            onClick={onClose}
+            disabled={!selectedUser || confirm !== WORKSPACE.name || saving}
+            onClick={async () => {
+              setSaving(true);
+              setError('');
+              try {
+                await onTransfer(selectedUser);
+                onClose();
+              } catch (err) {
+                setError(err instanceof Error ? err.message : 'Unable to transfer ownership.');
+              } finally {
+                setSaving(false);
+              }
+            }}
             className="px-4 py-2 rounded-lg text-xs text-white disabled:opacity-40 transition-opacity"
             style={{ background: '#f59e0b' }}
           >
-            Transfer Ownership
+            {saving ? 'Transferring...' : 'Transfer Ownership'}
           </button>
         </div>
       </div>
@@ -94,8 +143,10 @@ function TransferOwnershipModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-function DeleteWorkspaceModal({ onClose }: { onClose: () => void }) {
+function DeleteWorkspaceModal({ onClose, onDelete }: { onClose: () => void; onDelete: () => Promise<void> }) {
   const [confirm, setConfirm] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState('');
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div
@@ -126,14 +177,31 @@ function DeleteWorkspaceModal({ onClose }: { onClose: () => void }) {
               style={{ background: 'var(--input-background)', borderColor: '#fca5a5', color: 'var(--foreground)', fontFamily: 'var(--font-family-mono)' }}
             />
           </div>
+          {error && (
+            <div className="rounded-lg border px-3 py-2 text-xs" style={{ background: '#fff1f2', borderColor: '#fecdd3', color: '#be123c' }}>
+              {error}
+            </div>
+          )}
         </div>
         <div className="flex items-center justify-end gap-3 px-5 py-4 border-t" style={{ borderColor: 'var(--border)' }}>
           <button onClick={onClose} className="px-4 py-2 rounded-lg text-xs text-[var(--muted-foreground)] hover:bg-[var(--muted)]">Cancel</button>
           <button
             disabled={confirm !== WORKSPACE.slug}
+            onClick={async () => {
+              setDeleting(true);
+              setError('');
+              try {
+                await onDelete();
+                onClose();
+              } catch (err) {
+                setError(err instanceof Error ? err.message : 'Unable to delete workspace.');
+              } finally {
+                setDeleting(false);
+              }
+            }}
             className="px-4 py-2 rounded-lg text-xs text-white bg-red-500 disabled:opacity-40"
           >
-            Delete permanently
+            {deleting ? 'Deleting...' : 'Delete permanently'}
           </button>
         </div>
       </div>
@@ -144,21 +212,199 @@ function DeleteWorkspaceModal({ onClose }: { onClose: () => void }) {
 interface SettingsViewProps {
   settingsType?: 'workspace' | 'project';
   projectId?: string;
+  onWorkspaceExited?: () => void;
+  onProjectDeleted?: () => void;
 }
 
-export function SettingsView({ settingsType = 'workspace', projectId }: SettingsViewProps) {
+export function SettingsView({ settingsType = 'workspace', projectId, onWorkspaceExited, onProjectDeleted }: SettingsViewProps) {
   const [name, setName] = useState(WORKSPACE.name);
   const [slug, setSlug] = useState(WORKSPACE.slug);
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
   const [showTransfer, setShowTransfer] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [apiKey, setApiKey] = useState('qt_sk_demo_placeholder_key');
   const [activeSection, setActiveSection] = useState('general');
   const [viewMode, setViewMode] = useState<'workspace' | 'project'>(settingsType);
-  const isSoleOwner = USERS.filter((u) => u.role === 'owner').length === 1;
+  const [members, setMembers] = useState(USERS);
+  const [projectMembers, setProjectMembers] = useState<User[]>([]);
+  const [projectMemberToAdd, setProjectMemberToAdd] = useState('');
+  const [projectMemberSaving, setProjectMemberSaving] = useState(false);
+  const [projectDeleting, setProjectDeleting] = useState(false);
+  const [roleSavingUserId, setRoleSavingUserId] = useState('');
+  const selectedProject = projectId ? PROJECTS.find((item) => item.id === projectId) : undefined;
+  const currentProjectMember = projectMembers.find((member) => member.id === CURRENT_USER.id);
+  const currentUserCanManageProjectMembers = CURRENT_USER.role === 'owner' || CURRENT_USER.role === 'pm' || currentProjectMember?.role === 'pm';
+  const addableProjectMembers = USERS.filter(
+    (user) => user.role !== 'viewer' && !projectMembers.some((member) => member.id === user.id)
+  );
+  const otherMembers = USERS.filter((u) => u.id !== CURRENT_USER.id);
+  const currentUserIsWorkspaceOwner = WORKSPACE.ownerId === CURRENT_USER.id;
+  const currentUserIsOwner = currentUserIsWorkspaceOwner || CURRENT_USER.role === 'owner';
+  const currentUserCanManageWorkspace = currentUserIsOwner;
+  const projectMemberRole = (user: User) => (user.id === WORKSPACE.ownerId ? 'owner' : user.role);
 
-  const handleSave = () => {
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+  useEffect(() => {
+    setViewMode(settingsType);
+    setActiveSection('general');
+  }, [settingsType, projectId]);
+
+  useEffect(() => {
+    if (!WORKSPACE.id || activeSection !== 'members' || viewMode !== 'workspace') return;
+
+    fetchWorkspaceMembers(WORKSPACE.id)
+      .then((workspaceMembers) => setMembers([...workspaceMembers]))
+      .catch(() => setMembers([...USERS]));
+  }, [activeSection, viewMode]);
+
+  useEffect(() => {
+    if (!projectId || (activeSection !== 'members' && activeSection !== 'danger') || viewMode !== 'project') return;
+
+    const localProjectMembers = USERS.filter((user) => selectedProject?.memberIds.includes(user.id));
+    setProjectMembers(localProjectMembers);
+
+    fetchProjectMembers(projectId)
+      .then((loadedMembers) => setProjectMembers([...loadedMembers]))
+      .catch(() => setProjectMembers(localProjectMembers));
+  }, [activeSection, projectId, selectedProject?.memberIds.join(','), viewMode]);
+
+  const exitWorkspace = () => {
+    USERS.splice(0, USERS.length);
+    PROJECTS.splice(0, PROJECTS.length);
+    onWorkspaceExited?.();
+  };
+
+  const handleLeaveWorkspace = async () => {
+    setNotice('');
+    if (currentUserIsOwner) {
+      if (otherMembers.length === 0) {
+        setNotice('You are the owner and the only member. Delete the workspace instead of leaving it.');
+        return;
+      }
+
+      setShowTransfer(true);
+      return;
+    }
+
+    await leaveWorkspace(WORKSPACE.id);
+    exitWorkspace();
+  };
+
+  const transferOwnership = async (userId: string) => {
+    await transferWorkspaceOwnership(WORKSPACE.id, userId);
+    const current = USERS.find((user) => user.id === CURRENT_USER.id);
+    const nextOwner = USERS.find((user) => user.id === userId);
+    if (current) current.role = 'pm';
+    if (nextOwner) nextOwner.role = 'owner';
+    setNotice('Workspace ownership transferred. You are now a Project Manager.');
+    setMembers([...USERS]);
+  };
+
+  const changeMemberRole = async (userId: string, role: User['role']) => {
+    setRoleSavingUserId(userId);
+    setNotice('');
+
+    try {
+      await updateWorkspaceMemberRole(WORKSPACE.id, userId, role);
+      setMembers((prev) => prev.map((member) => (member.id === userId ? { ...member, role } : member)));
+      setNotice('Workspace member role updated.');
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Unable to update member role.');
+    } finally {
+      setRoleSavingUserId('');
+    }
+  };
+
+  const addProjectMember = async () => {
+    if (!projectId || !projectMemberToAdd) return;
+    if (!currentUserCanManageProjectMembers) {
+      setNotice('Only a project manager can add members to this project.');
+      return;
+    }
+
+    setProjectMemberSaving(true);
+    setNotice('');
+
+    try {
+      await assignProjectMember(projectId, projectMemberToAdd, 'developer');
+      const user = USERS.find((item) => item.id === projectMemberToAdd);
+      if (user) {
+        setProjectMembers((prev) => [...prev.filter((member) => member.id !== user.id), user]);
+      }
+      setProjectMemberToAdd('');
+      setNotice('Project member added.');
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Unable to add project member.');
+    } finally {
+      setProjectMemberSaving(false);
+    }
+  };
+
+  const removeMemberFromProject = async (userId: string) => {
+    if (!projectId) return;
+    if (userId === WORKSPACE.ownerId) {
+      setNotice('The workspace owner cannot be removed from a project.');
+      return;
+    }
+
+    if (!currentUserCanManageProjectMembers) {
+      setNotice('Only a project manager can remove members from this project.');
+      return;
+    }
+
+    setProjectMemberSaving(true);
+    setNotice('');
+
+    try {
+      await removeProjectMember(projectId, userId);
+      setProjectMembers((prev) => prev.filter((member) => member.id !== userId));
+      setNotice('Project member removed.');
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Unable to remove project member.');
+    } finally {
+      setProjectMemberSaving(false);
+    }
+  };
+
+  const handleDeleteProject = async () => {
+    if (!projectId || !selectedProject) return;
+    if (!currentUserCanManageProjectMembers) {
+      setNotice('Only the workspace owner or this project manager can archive this project.');
+      return;
+    }
+
+    const confirmed = window.confirm(`Archive ${selectedProject.name}? Tasks and sprints will be hidden with this project.`);
+    if (!confirmed) return;
+
+    setProjectDeleting(true);
+    setNotice('');
+
+    try {
+      await deleteProject(projectId);
+      setNotice('Project archived.');
+      onProjectDeleted?.();
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Unable to archive project.');
+    } finally {
+      setProjectDeleting(false);
+    }
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    setSaved(false);
+    setSaveError('');
+
+    try {
+      await updateWorkspace(WORKSPACE.id, name);
+      setSaved(true);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Unable to save workspace.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const workspaceSections = [
@@ -183,38 +429,8 @@ export function SettingsView({ settingsType = 'workspace', projectId }: Settings
         className="w-48 flex-shrink-0 border-r p-3"
         style={{ background: 'var(--card)', borderColor: 'var(--border)' }}
       >
-        {/* Toggle between workspace and project settings */}
-        <div className="mb-4 p-1 rounded-lg" style={{ background: 'var(--muted)' }}>
-          <button
-            onClick={() => {
-              setViewMode('workspace');
-              setActiveSection('general');
-            }}
-            className={`w-full px-2 py-1.5 rounded text-xs transition-colors ${
-              viewMode === 'workspace'
-                ? 'bg-white text-[var(--foreground)] shadow-sm'
-                : 'text-[var(--muted-foreground)]'
-            }`}
-          >
-            Workspace
-          </button>
-          <button
-            onClick={() => {
-              setViewMode('project');
-              setActiveSection('general');
-            }}
-            className={`w-full px-2 py-1.5 rounded text-xs transition-colors ${
-              viewMode === 'project'
-                ? 'bg-white text-[var(--foreground)] shadow-sm'
-                : 'text-[var(--muted-foreground)]'
-            }`}
-          >
-            Project
-          </button>
-        </div>
-
         <p className="text-[10px] uppercase tracking-wider text-[var(--muted-foreground)] px-2 mb-2">
-          {viewMode === 'workspace' ? 'Workspace' : 'Project'}
+          {viewMode === 'workspace' ? 'Workspace' : selectedProject?.name || 'Project'}
         </p>
         {sections.map((s) => (
           <button
@@ -234,6 +450,11 @@ export function SettingsView({ settingsType = 'workspace', projectId }: Settings
 
       {/* Main content */}
       <div className="flex-1 overflow-y-auto p-6">
+        {notice && (
+          <div className="mb-4 rounded-lg border px-3 py-2 text-xs" style={{ background: '#f0fdf4', borderColor: '#bbf7d0', color: '#15803d' }}>
+            {notice}
+          </div>
+        )}
         {viewMode === 'project' && activeSection === 'general' && (
           <div className="max-w-lg space-y-6">
             <div>
@@ -246,7 +467,7 @@ export function SettingsView({ settingsType = 'workspace', projectId }: Settings
                 <label className="block text-xs text-[var(--muted-foreground)] mb-1.5">Project name</label>
                 <input
                   type="text"
-                  defaultValue="AI Engine"
+                  defaultValue=""
                   className="w-full px-3 py-2.5 rounded-lg border text-sm outline-none"
                   style={{ background: 'var(--input-background)', borderColor: 'var(--border)', color: 'var(--foreground)' }}
                   onFocus={(e) => (e.target.style.borderColor = 'var(--primary)')}
@@ -256,7 +477,7 @@ export function SettingsView({ settingsType = 'workspace', projectId }: Settings
               <div>
                 <label className="block text-xs text-[var(--muted-foreground)] mb-1.5">Description</label>
                 <textarea
-                  defaultValue="Core machine learning engine for task assignment recommendations"
+                  defaultValue=""
                   rows={3}
                   className="w-full px-3 py-2.5 rounded-lg border text-sm outline-none resize-none"
                   style={{ background: 'var(--input-background)', borderColor: 'var(--border)', color: 'var(--foreground)' }}
@@ -268,7 +489,7 @@ export function SettingsView({ settingsType = 'workspace', projectId }: Settings
                 <label className="block text-xs text-[var(--muted-foreground)] mb-1.5">Project key</label>
                 <input
                   type="text"
-                  defaultValue="AIENG"
+                  defaultValue=""
                   className="w-full px-3 py-2.5 rounded-lg border text-sm outline-none"
                   style={{ background: 'var(--input-background)', borderColor: 'var(--border)', color: 'var(--foreground)', fontFamily: 'var(--font-family-mono)' }}
                   onFocus={(e) => (e.target.style.borderColor = 'var(--primary)')}
@@ -292,10 +513,14 @@ export function SettingsView({ settingsType = 'workspace', projectId }: Settings
           <div className="max-w-lg">
             <div className="mb-6">
               <h2 className="text-base text-[var(--foreground)] mb-0.5">Project Members</h2>
-              <p className="text-xs text-[var(--muted-foreground)]">Manage who has access to this specific project.</p>
+              <p className="text-xs text-[var(--muted-foreground)]">
+                {currentUserCanManageProjectMembers
+                  ? 'Add workspace members to this project before assigning tasks to them.'
+                  : 'Project members are managed by project managers.'}
+              </p>
             </div>
             <div className="space-y-2">
-              {USERS.filter((u) => ['alice', 'bob', 'carol'].includes(u.id)).map((user) => (
+              {projectMembers.map((user) => (
                 <div
                   key={user.id}
                   className="rounded-xl border p-4 flex items-center justify-between"
@@ -313,13 +538,63 @@ export function SettingsView({ settingsType = 'workspace', projectId }: Settings
                       <p className="text-[10px] text-[var(--muted-foreground)]">{user.email}</p>
                     </div>
                   </div>
-                  <button className="text-xs text-red-500 hover:underline">Remove</button>
+                  {currentUserCanManageProjectMembers && user.id !== CURRENT_USER.id && user.id !== WORKSPACE.ownerId ? (
+                    <button
+                      disabled={projectMemberSaving}
+                      onClick={() => removeMemberFromProject(user.id)}
+                      className="text-xs text-red-500 hover:underline disabled:opacity-40"
+                    >
+                      Remove
+                    </button>
+                  ) : (
+                    <span className="text-xs text-[var(--muted-foreground)]">
+                      {user.id === CURRENT_USER.id ? 'You' : ROLE_LABELS[projectMemberRole(user)]}
+                    </span>
+                  )}
                 </div>
               ))}
+              {projectMembers.length === 0 && (
+                <p className="rounded-xl border px-4 py-3 text-xs text-[var(--muted-foreground)]" style={{ borderColor: 'var(--border)' }}>
+                  No project members have been loaded yet.
+                </p>
+              )}
             </div>
-            <button className="mt-4 w-full px-4 py-2 rounded-lg text-xs border transition-colors hover:bg-[var(--muted)]" style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }}>
-              + Add member to project
-            </button>
+            {currentUserCanManageProjectMembers ? (
+              <>
+                <div className="mt-4 flex gap-2">
+                  <select
+                    value={projectMemberToAdd}
+                    onChange={(event) => setProjectMemberToAdd(event.target.value)}
+                    className="flex-1 px-3 py-2 rounded-lg border text-xs outline-none"
+                    style={{ background: 'var(--input-background)', borderColor: 'var(--border)', color: 'var(--foreground)' }}
+                  >
+                    <option value="">Select workspace member</option>
+                    {addableProjectMembers.map((user) => (
+                      <option key={user.id} value={user.id}>
+                        {user.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    disabled={!projectMemberToAdd || projectMemberSaving}
+                    onClick={addProjectMember}
+                    className="px-4 py-2 rounded-lg text-xs text-white disabled:opacity-40"
+                    style={{ background: 'var(--primary)' }}
+                  >
+                    Add
+                  </button>
+                </div>
+                {addableProjectMembers.length === 0 && (
+                  <p className="mt-2 text-[10px] text-[var(--muted-foreground)]">
+                    All available workspace members are already on this project.
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="mt-4 rounded-lg border px-3 py-2 text-xs text-[var(--muted-foreground)]" style={{ borderColor: 'var(--border)' }}>
+                You can view project members, but only project managers can add or remove them.
+              </p>
+            )}
           </div>
         )}
 
@@ -338,16 +613,23 @@ export function SettingsView({ settingsType = 'workspace', projectId }: Settings
                 <div>
                   <h3 className="text-sm text-red-600 mb-1">Archive Project</h3>
                   <p className="text-xs text-red-500 leading-relaxed">
-                    Archive this project. Tasks will be preserved but the project will be hidden.
+                    Archive this project. Tasks and sprints will be preserved but hidden with the project.
                   </p>
                 </div>
                 <button
-                  className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs bg-red-500 text-white hover:bg-red-600 transition-colors"
+                  disabled={!currentUserCanManageProjectMembers || projectDeleting}
+                  onClick={handleDeleteProject}
+                  className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs bg-red-500 text-white hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
                   <Trash2 size={12} />
-                  Archive
+                  {projectDeleting ? 'Archiving...' : 'Archive'}
                 </button>
               </div>
+              {!currentUserCanManageProjectMembers && (
+                <p className="mt-3 text-xs text-red-500">
+                  Only the workspace owner or this project manager can archive this project.
+                </p>
+              )}
             </div>
           </div>
         )}
@@ -358,6 +640,15 @@ export function SettingsView({ settingsType = 'workspace', projectId }: Settings
               <h2 className="text-base text-[var(--foreground)] mb-0.5">General Settings</h2>
               <p className="text-xs text-[var(--muted-foreground)]">Manage your workspace name, URL, and metadata.</p>
             </div>
+
+            {saveError && (
+              <div
+                className="rounded-lg border px-3 py-2 text-xs"
+                style={{ background: '#fef2f2', borderColor: '#fecaca', color: '#b91c1c' }}
+              >
+                {saveError}
+              </div>
+            )}
 
             <div className="space-y-4">
               <div>
@@ -390,11 +681,12 @@ export function SettingsView({ settingsType = 'workspace', projectId }: Settings
 
               <button
                 onClick={handleSave}
+                disabled={saving}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs text-white transition-all"
                 style={{ background: saved ? '#22c55e' : 'var(--primary)' }}
               >
                 {saved ? <Check size={13} /> : <Save size={13} />}
-                {saved ? 'Saved!' : 'Save changes'}
+                {saving ? 'Saving...' : saved ? 'Saved!' : 'Save changes'}
               </button>
             </div>
           </div>
@@ -415,7 +707,15 @@ export function SettingsView({ settingsType = 'workspace', projectId }: Settings
                   <Key size={14} className="text-[var(--muted-foreground)]" />
                   <span className="text-xs text-[var(--foreground)]">API Key</span>
                 </div>
-                <button className="text-xs text-[var(--primary)] hover:underline">Regenerate</button>
+                <button
+                  onClick={() => {
+                    setApiKey(`qt_sk_${Math.random().toString(36).slice(2, 14)}${Date.now().toString(36)}`);
+                    setNotice('API key regenerated for this session.');
+                  }}
+                  className="text-xs text-[var(--primary)] hover:underline"
+                >
+                  Regenerate
+                </button>
               </div>
               <code
                 className="block px-3 py-2 rounded-lg text-xs"
@@ -425,8 +725,9 @@ export function SettingsView({ settingsType = 'workspace', projectId }: Settings
                   fontFamily: 'var(--font-family-mono)',
                 }}
               >
-                qt_sk_••••••••••••••••••••••••••••••
+                {apiKey}
               </code>
+              {notice && <p className="text-[10px] text-emerald-600">{notice}</p>}
               <p className="text-[10px] text-[var(--muted-foreground)]">
                 Use this key to authenticate the QuanTask GitHub App and AI engine integrations.
               </p>
@@ -454,8 +755,9 @@ export function SettingsView({ settingsType = 'workspace', projectId }: Settings
                   </p>
                 </div>
                 <button
+                  disabled={!currentUserCanManageWorkspace}
                   onClick={() => setShowTransfer(true)}
-                  className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs border border-amber-300 text-amber-700 hover:bg-amber-100 transition-colors"
+                  className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs border border-amber-300 text-amber-700 hover:bg-amber-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
                   <Shield size={12} />
                   Transfer
@@ -472,24 +774,32 @@ export function SettingsView({ settingsType = 'workspace', projectId }: Settings
                 <div>
                   <h3 className="text-sm text-[var(--foreground)] mb-1">Leave Workspace</h3>
                   <p className="text-xs text-[var(--muted-foreground)] leading-relaxed">
-                    {isSoleOwner
-                      ? 'You cannot leave as the sole owner. Transfer ownership first.'
+                    {currentUserIsOwner
+                      ? otherMembers.length === 0
+                        ? 'Owners cannot leave as the only member. Delete the workspace instead.'
+                        : 'Owners must transfer ownership to another member before leaving.'
                       : 'You will lose access to all projects and data in this workspace.'}
                   </p>
                 </div>
                 <button
-                  disabled={isSoleOwner}
+                  onClick={async () => {
+                    try {
+                      await handleLeaveWorkspace();
+                    } catch (err) {
+                      setNotice(err instanceof Error ? err.message : 'Unable to leave workspace.');
+                    }
+                  }}
                   className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs border text-red-500 border-red-200 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
-                  {isSoleOwner && <Lock size={12} />}
-                  {!isSoleOwner && <LogOut size={12} />}
-                  Leave
+                  {currentUserIsOwner && <Lock size={12} />}
+                  {!currentUserIsOwner && <LogOut size={12} />}
+                  {currentUserIsOwner ? 'Transfer first' : 'Leave'}
                 </button>
               </div>
-              {isSoleOwner && (
+              {currentUserIsOwner && (
                 <div className="mt-3 flex items-center gap-2 text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
                   <Lock size={11} />
-                  You are the sole owner — transfer ownership before leaving.
+                  Transfer ownership first. After transfer, your role becomes Project Manager and you can leave normally.
                 </div>
               )}
             </div>
@@ -507,9 +817,9 @@ export function SettingsView({ settingsType = 'workspace', projectId }: Settings
                   </p>
                 </div>
                 <button
-                  disabled={isSoleOwner ? false : true}
+                  disabled={!currentUserCanManageWorkspace}
                   onClick={() => setShowDelete(true)}
-                  className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs bg-red-500 text-white hover:bg-red-600 transition-colors"
+                  className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs bg-red-500 text-white hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
                   <Trash2 size={12} />
                   Delete
@@ -558,12 +868,73 @@ export function SettingsView({ settingsType = 'workspace', projectId }: Settings
                 );
               })}
             </div>
+
+            <div className="mt-6">
+              <h3 className="text-sm text-[var(--foreground)] mb-2">Workspace Members</h3>
+              <p className="text-xs text-[var(--muted-foreground)] mb-3">
+                Workspace owners can change member roles. Ownership changes still use transfer ownership.
+              </p>
+              <div className="space-y-2">
+                {members.map((member) => {
+                  const isWorkspaceOwner = member.id === WORKSPACE.ownerId || member.role === 'owner';
+                  return (
+                    <div
+                      key={member.id}
+                      className="rounded-xl border p-4 flex items-center justify-between gap-4"
+                      style={{ borderColor: 'var(--border)', background: 'var(--card)' }}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div
+                          className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs flex-shrink-0"
+                          style={{ background: '#5c5cf5', fontFamily: 'var(--font-family-mono)' }}
+                        >
+                          {member.avatar}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs text-[var(--foreground)] truncate">{member.name}</p>
+                          <p className="text-[10px] text-[var(--muted-foreground)] truncate">{secondaryMemberLabel(member)}</p>
+                        </div>
+                      </div>
+
+                      {isWorkspaceOwner || !currentUserCanManageWorkspace ? (
+                        <span
+                          className="px-2 py-1 rounded-full text-[10px]"
+                          style={{ background: 'var(--muted)', color: 'var(--muted-foreground)' }}
+                        >
+                          {ROLE_LABELS[member.role]}
+                        </span>
+                      ) : (
+                        <select
+                          value={member.role}
+                          disabled={roleSavingUserId === member.id}
+                          onChange={(event) => changeMemberRole(member.id, event.target.value as User['role'])}
+                          className="px-2 py-1 rounded-lg border text-[10px] outline-none"
+                          style={{ background: 'var(--input-background)', borderColor: 'var(--border)', color: 'var(--foreground)' }}
+                        >
+                          <option value="pm">Project Manager</option>
+                          <option value="developer">Developer</option>
+                          <option value="viewer">Viewer</option>
+                        </select>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         )}
       </div>
 
-      {showTransfer && <TransferOwnershipModal onClose={() => setShowTransfer(false)} />}
-      {showDelete && <DeleteWorkspaceModal onClose={() => setShowDelete(false)} />}
+      {showTransfer && <TransferOwnershipModal onClose={() => setShowTransfer(false)} onTransfer={transferOwnership} />}
+      {showDelete && (
+        <DeleteWorkspaceModal
+          onClose={() => setShowDelete(false)}
+          onDelete={async () => {
+            await deleteWorkspace(WORKSPACE.id);
+            exitWorkspace();
+          }}
+        />
+      )}
     </div>
   );
 }

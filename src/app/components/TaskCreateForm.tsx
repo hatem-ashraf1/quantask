@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { X, Save, Sparkles, Calendar, Flag, User2, ChevronDown } from 'lucide-react';
-import { USERS, SPRINTS } from '../data/mockData';
+import { PROJECTS, USERS, SPRINTS } from '../data/store';
+import { canCreateTaskInProject } from '../utils/permissions';
 
 interface TaskCreateFormProps {
   projectId: string;
   onClose: () => void;
-  onCreate?: (taskData: any) => void;
+  onCreate?: (taskData: any) => void | Promise<void>;
 }
 
 const PRIORITY_CONFIG = {
@@ -23,11 +24,24 @@ export function TaskCreateForm({ projectId, onClose, onCreate }: TaskCreateFormP
   const [sprintId, setSprintId] = useState<string>('');
   const [dueDate, setDueDate] = useState('');
   const [storyPoints, setStoryPoints] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
+  const project = PROJECTS.find((item) => item.id === projectId);
   const projectSprints = SPRINTS.filter((s) => s.projectId === projectId && s.status !== 'completed');
+  const canCreateTask = canCreateTaskInProject(projectId);
+  const assignableUsers = USERS.filter(
+    (user) => user.role !== 'viewer' && (!project || project.memberIds.includes(user.id))
+  );
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
+    if (!canCreateTask) {
+      setError('Only project managers can create tasks.');
+      return;
+    }
     if (!title.trim()) return;
+    setSaving(true);
+    setError('');
 
     const taskData = {
       title,
@@ -40,8 +54,14 @@ export function TaskCreateForm({ projectId, onClose, onCreate }: TaskCreateFormP
       projectId,
     };
 
-    onCreate?.(taskData);
-    onClose();
+    try {
+      await onCreate?.(taskData);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to create task.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -69,6 +89,23 @@ export function TaskCreateForm({ projectId, onClose, onCreate }: TaskCreateFormP
 
         {/* Form */}
         <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+          {error && (
+            <div
+              className="rounded-lg border px-3 py-2 text-xs"
+              style={{ background: '#fef2f2', borderColor: '#fecaca', color: '#b91c1c' }}
+            >
+              {error}
+            </div>
+          )}
+          {!canCreateTask && (
+            <div
+              className="rounded-lg border px-3 py-2 text-xs"
+              style={{ background: '#fffbeb', borderColor: '#fde68a', color: '#92400e' }}
+            >
+              Only project managers can create tasks for this project.
+            </div>
+          )}
+
           {/* Title */}
           <div>
             <label className="block text-xs font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>
@@ -155,12 +192,17 @@ export function TaskCreateForm({ projectId, onClose, onCreate }: TaskCreateFormP
                 }}
               >
                 <option value="">Unassigned</option>
-                {USERS.filter((u) => u.role !== 'viewer').map((user) => (
+                {assignableUsers.map((user) => (
                   <option key={user.id} value={user.id}>
                     {user.name}
                   </option>
                 ))}
               </select>
+              {assignableUsers.length === 0 && (
+                <p className="mt-1.5 text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                  Add members to this project before assigning tasks.
+                </p>
+              )}
             </div>
           </div>
 
@@ -275,12 +317,12 @@ export function TaskCreateForm({ projectId, onClose, onCreate }: TaskCreateFormP
           </button>
           <button
             onClick={handleCreate}
-            disabled={!title.trim()}
+            disabled={!canCreateTask || !title.trim() || saving}
             className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ background: 'var(--primary)' }}
           >
             <Save size={14} />
-            Create Task
+            {saving ? 'Creating...' : 'Create Task'}
           </button>
         </div>
       </div>

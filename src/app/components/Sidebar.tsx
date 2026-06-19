@@ -3,7 +3,7 @@ import {
   LayoutGrid, Trello, ListTodo, Users, Settings, Trash2, ChevronDown,
   Plus, Zap, Circle, CheckCircle2, Clock, FolderKanban, Building2
 } from 'lucide-react';
-import { PROJECTS, WORKSPACE, CURRENT_USER } from '../data/mockData';
+import { PROJECTS, WORKSPACE, CURRENT_USER } from '../data/store';
 
 type View =
   | 'dashboard'
@@ -21,6 +21,8 @@ interface SidebarProps {
   selectedProjectId: string;
   onViewChange: (view: View) => void;
   onProjectChange: (projectId: string) => void;
+  onCreateProject: () => void;
+  onSwitchWorkspace: () => void;
 }
 
 const AVATAR_COLORS: Record<string, string> = {
@@ -32,11 +34,12 @@ const AVATAR_COLORS: Record<string, string> = {
   u6: '#06b6d4',
 };
 
-export function Sidebar({ currentView, selectedProjectId, onViewChange, onProjectChange }: SidebarProps) {
+export function Sidebar({ currentView, selectedProjectId, onViewChange, onProjectChange, onCreateProject, onSwitchWorkspace }: SidebarProps) {
   const [projectsExpanded, setProjectsExpanded] = useState(true);
   const [workspaceDropdownOpen, setWorkspaceDropdownOpen] = useState(false);
 
   const project = PROJECTS.find((p) => p.id === selectedProjectId);
+  const canCreateProject = CURRENT_USER.role === 'owner' || CURRENT_USER.role === 'pm';
 
   const navItem = (
     label: string,
@@ -101,6 +104,23 @@ export function Sidebar({ currentView, selectedProjectId, onViewChange, onProjec
             className={`w-3.5 h-3.5 text-[var(--sidebar-muted)] transition-transform ${workspaceDropdownOpen ? 'rotate-180' : ''}`}
           />
         </button>
+        {workspaceDropdownOpen && (
+          <div
+            className="mt-2 rounded-lg border overflow-hidden"
+            style={{ background: 'var(--sidebar-accent)', borderColor: 'var(--sidebar-border)' }}
+          >
+            <button
+              onClick={() => {
+                setWorkspaceDropdownOpen(false);
+                onSwitchWorkspace();
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-[var(--sidebar-foreground)] hover:bg-[var(--sidebar)] transition-colors"
+            >
+              <Building2 size={12} />
+              Switch workspace
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Navigation */}
@@ -127,7 +147,12 @@ export function Sidebar({ currentView, selectedProjectId, onViewChange, onProjec
               />
               <span>Projects</span>
             </button>
-            <button className="p-0.5 rounded hover:bg-[var(--sidebar-accent)] text-[var(--sidebar-muted)] hover:text-[var(--sidebar-accent-foreground)] transition-colors">
+            <button
+              onClick={onCreateProject}
+              disabled={!canCreateProject}
+              title={canCreateProject ? 'Create project' : 'Only workspace owners and PMs can create projects'}
+              className="p-0.5 rounded hover:bg-[var(--sidebar-accent)] text-[var(--sidebar-muted)] hover:text-[var(--sidebar-accent-foreground)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
               <Plus size={12} />
             </button>
           </div>

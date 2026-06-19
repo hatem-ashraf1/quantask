@@ -1,6 +1,8 @@
-import { useState } from 'react';
-import { Trash2, RotateCcw, AlertTriangle, Search, Clock, User2 } from 'lucide-react';
-import { TASKS, getUserById } from '../data/mockData';
+import { useEffect, useState } from 'react';
+import { Trash2, RotateCcw, AlertTriangle, Search } from 'lucide-react';
+import { TASKS, WORKSPACE, Task, getUserById } from '../data/store';
+import { fetchDeletedTasks, restoreTask } from '../api/client';
+import { canDeleteTaskInProject } from '../utils/permissions';
 
 const AVATAR_COLORS: Record<string, string> = {
   u1: '#5c5cf5', u2: '#22c55e', u3: '#f59e0b', u4: '#ef4444', u5: '#8b5cf6', u6: '#06b6d4',
@@ -11,21 +13,71 @@ interface TrashViewProps {
 }
 
 export function TrashView({ onRestore }: TrashViewProps) {
+  const [trashTasks, setTrashTasks] = useState<Task[]>([]);
+  const [loadedTrash, setLoadedTrash] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [restored, setRestored] = useState<string[]>([]);
+  const [restoringTaskId, setRestoringTaskId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [error, setError] = useState('');
 
-  const deletedTasks = TASKS.filter((t) => t.isDeleted && !restored.includes(t.id)).filter(
+  const sourceTasks = loadedTrash ? trashTasks : TASKS.filter((t) => t.isDeleted);
+  const deletedTasks = sourceTasks.filter((t) => t.isDeleted && !restored.includes(t.id)).filter(
     (t) =>
       t.title.toLowerCase().includes(search.toLowerCase()) ||
       t.key.toLowerCase().includes(search.toLowerCase())
   );
 
-  const handleRestore = (taskId: string) => {
-    setRestored((prev) => [...prev, taskId]);
-    onRestore?.(taskId);
+  useEffect(() => {
+    if (!WORKSPACE.id) return;
+
+    let active = true;
+    setLoading(true);
+    setError('');
+
+    fetchDeletedTasks(WORKSPACE.id)
+      .then((tasks) => {
+        if (active) {
+          setTrashTasks(tasks);
+          setLoadedTrash(true);
+        }
+      })
+      .catch((err) => {
+        if (active) setError(err instanceof Error ? err.message : 'Unable to load deleted tasks.');
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [WORKSPACE.id]);
+
+  const handleRestore = async (taskId: string) => {
+    if (restoringTaskId) return;
+    setError('');
+    setRestoringTaskId(taskId);
+    try {
+      await restoreTask(taskId);
+      setRestored((prev) => [...prev, taskId]);
+      setTrashTasks((prev) => prev.filter((task) => task.id !== taskId));
+      onRestore?.(taskId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to restore task.';
+      if (message.toLowerCase().includes('task is not deleted')) {
+        setRestored((prev) => [...prev, taskId]);
+        setTrashTasks((prev) => prev.filter((task) => task.id !== taskId));
+        onRestore?.(taskId);
+      } else {
+        setError(message);
+      }
+    } finally {
+      setRestoringTaskId(null);
+    }
   };
 
-  const getLastActivity = (task: typeof TASKS[0]) => {
+  const getLastActivity = (task: Task) => {
     if (task.activity.length === 0) return null;
     const last = task.activity[task.activity.length - 1];
     if (last.type === 'audit') return { text: last.action, time: last.timestamp, userId: last.userId };
@@ -75,6 +127,11 @@ export function TrashView({ onRestore }: TrashViewProps) {
           </span>
         </div>
       )}
+      {error && (
+        <div className="px-5 py-2.5 border-b text-xs text-red-600" style={{ background: '#fef2f2', borderColor: '#fecaca' }}>
+          {error}
+        </div>
+      )}
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-5">
@@ -108,6 +165,7 @@ export function TrashView({ onRestore }: TrashViewProps) {
             {deletedTasks.map((task, idx) => {
               const lastActivity = getLastActivity(task);
               const deletedBy = lastActivity?.userId ? getUserById(lastActivity.userId) : null;
+              const canRestoreTask = canDeleteTaskInProject(task.projectId);
               const deletedAt = lastActivity?.time
                 ? new Date(lastActivity.time).toLocaleDateString('en-US', {
                     month: 'short',
@@ -185,20 +243,21 @@ export function TrashView({ onRestore }: TrashViewProps) {
 
                   {/* Actions */}
                   <div className="flex items-center gap-1.5">
-                    <button
-                      onClick={() => handleRestore(task.id)}
-                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] border transition-colors hover:bg-[var(--muted)]"
-                      style={{ borderColor: 'var(--border)', color: 'var(--foreground)' }}
-                    >
-                      <RotateCcw size={10} />
-                      Restore
-                    </button>
-                    <button
-                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] text-red-500 hover:bg-red-50 transition-colors"
-                    >
-                      <Trash2 size={10} />
-                      Delete
-                    </button>
+                    {canRestoreTask ? (
+                      <button
+                        onClick={() => handleRestore(task.id)}
+                        disabled={restoringTaskId === task.id}
+                        className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] border transition-colors hover:bg-[var(--muted)] disabled:opacity-50 disabled:cursor-not-allowed"
+                        style={{ borderColor: 'var(--border)', color: 'var(--foreground)' }}
+                      >
+                        <RotateCcw size={10} />
+                        {restoringTaskId === task.id ? 'Restoring...' : 'Restore'}
+                      </button>
+                    ) : (
+                      <span className="text-[10px] text-[var(--muted-foreground)]">
+                        Project manager only
+                      </span>
+                    )}
                   </div>
                 </div>
               );

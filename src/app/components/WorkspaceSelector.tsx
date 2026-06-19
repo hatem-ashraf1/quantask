@@ -1,5 +1,19 @@
-import { Plus, Users, ChevronRight, Briefcase } from 'lucide-react';
-import { useState } from 'react';
+import { Plus, Users, ChevronRight, Briefcase, Mail, Check, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import {
+  acceptInvitation,
+  ApiError,
+  createWorkspace,
+  fetchPendingInvitations,
+  fetchWorkspaces,
+  getRememberedWorkspaces,
+  isUnauthorizedError,
+  rememberJoinedWorkspace,
+  rememberWorkspaceOwner,
+  rejectInvitation,
+  PendingWorkspaceInvitation,
+  RememberedWorkspace,
+} from '../api/client';
 
 interface Workspace {
   id: string;
@@ -9,46 +23,225 @@ interface Workspace {
   role: 'Owner' | 'Project Manager' | 'Developer' | 'Viewer';
 }
 
-const MOCK_WORKSPACES: Workspace[] = [
-  {
-    id: 'w1',
-    name: 'QuanTask HQ',
-    description: 'Main development workspace',
-    memberCount: 12,
-    role: 'Owner',
-  },
-  {
-    id: 'w2',
-    name: 'Mobile Team',
-    description: 'iOS and Android development',
-    memberCount: 8,
-    role: 'Developer',
-  },
-  {
-    id: 'w3',
-    name: 'Design System',
-    description: 'Component library and design tokens',
-    memberCount: 5,
-    role: 'Project Manager',
-  },
-];
-
 interface WorkspaceSelectorProps {
   onWorkspaceSelect: (workspaceId: string) => void;
+  onSessionExpired: () => void;
 }
 
-export function WorkspaceSelector({ onWorkspaceSelect }: WorkspaceSelectorProps) {
+function toWorkspaceRole(role?: string): Workspace['role'] {
+  const normalized = String(role || '').toLowerCase().replace(/[\s_-]/g, '');
+  if (normalized === 'owner') return 'Owner';
+  if (normalized === 'pm' || normalized === 'projectmanager') return 'Project Manager';
+  if (normalized === 'viewer') return 'Viewer';
+  return 'Developer';
+}
+
+function mapWorkspaceCard(workspace: Awaited<ReturnType<typeof fetchWorkspaces>>[number]): Workspace {
+  return {
+    id: workspace.id,
+    name: workspace.name,
+    description: workspace.description || 'Workspace',
+    memberCount: workspace.memberCount || workspace.workspaceMembers?.length || workspace.members?.length || workspace.Members?.length || 0,
+    role: toWorkspaceRole(workspace.role),
+  };
+}
+
+function mapRememberedWorkspaceCard(workspace: RememberedWorkspace): Workspace {
+  return {
+    id: workspace.id,
+    name: workspace.name,
+    description: workspace.description || 'Workspace',
+    memberCount: workspace.memberCount || 0,
+    role: toWorkspaceRole(workspace.role),
+  };
+}
+
+function mergeWorkspaceCards(apiWorkspaces: Workspace[]) {
+  const workspaceIds = new Set(apiWorkspaces.map((workspace) => workspace.id));
+  const rememberedWorkspaces = getRememberedWorkspaces()
+    .filter((workspace) => workspace.id && !workspaceIds.has(workspace.id))
+    .map(mapRememberedWorkspaceCard);
+
+  return [...apiWorkspaces, ...rememberedWorkspaces];
+}
+
+function rememberWorkspaceCard(workspace: Workspace) {
+  rememberJoinedWorkspace({
+    id: workspace.id,
+    name: workspace.name,
+    description: workspace.description,
+    memberCount: workspace.memberCount,
+    role: workspace.role,
+  });
+}
+
+function filterJoinableInvitations(workspaces: Workspace[], pendingInvitations: PendingWorkspaceInvitation[]) {
+  const joinedWorkspaceIds = new Set(workspaces.map((workspace) => workspace.id));
+  return pendingInvitations.filter((invitation) => !invitation.workspaceId || !joinedWorkspaceIds.has(invitation.workspaceId));
+}
+
+export function WorkspaceSelector({ onWorkspaceSelect, onSessionExpired }: WorkspaceSelectorProps) {
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [invitations, setInvitations] = useState<PendingWorkspaceInvitation[]>([]);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newWorkspaceName, setNewWorkspaceName] = useState('');
   const [newWorkspaceDesc, setNewWorkspaceDesc] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [processingInviteId, setProcessingInviteId] = useState('');
+  const [error, setError] = useState('');
 
-  const handleCreate = () => {
+  useEffect(() => {
+    let active = true;
+
+    const loadWorkspaceHome = async () => {
+      setLoading(true);
+      try {
+        const [items, pendingInvitations] = await Promise.all([
+          fetchWorkspaces(),
+          fetchPendingInvitations().catch((err) => {
+            if (isUnauthorizedError(err)) throw err;
+            return [];
+          }),
+        ]);
+
+        if (!active) return;
+        const apiWorkspaceCards = items.map(mapWorkspaceCard);
+        apiWorkspaceCards.forEach(rememberWorkspaceCard);
+        const workspaceCards = mergeWorkspaceCards(apiWorkspaceCards);
+        setWorkspaces(workspaceCards);
+        setInvitations(filterJoinableInvitations(workspaceCards, pendingInvitations));
+        setError('');
+      } catch (err) {
+        if (!active) return;
+        if (isUnauthorizedError(err)) {
+          onSessionExpired();
+          return;
+        }
+        setError(err instanceof Error ? err.message : 'Unable to load workspaces.');
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    loadWorkspaceHome();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const refreshWorkspaceHome = async () => {
+    const [items, pendingInvitations] = await Promise.all([fetchWorkspaces(), fetchPendingInvitations()]);
+    const apiWorkspaceCards = items.map(mapWorkspaceCard);
+    apiWorkspaceCards.forEach(rememberWorkspaceCard);
+    const workspaceCards = mergeWorkspaceCards(apiWorkspaceCards);
+    setWorkspaces(workspaceCards);
+    setInvitations(filterJoinableInvitations(workspaceCards, pendingInvitations));
+    return workspaceCards;
+  };
+
+  const handleAcceptInvitation = async (invitation: PendingWorkspaceInvitation) => {
+    const { invitationId, workspaceId } = invitation;
+
+    if (!invitationId) {
+      setError('This invitation is missing its id. Please refresh and try again.');
+      return;
+    }
+
+    setProcessingInviteId(invitationId);
+    setError('');
+
+    try {
+      rememberWorkspaceOwner(workspaceId, invitation.workspaceOwner);
+      await acceptInvitation(invitationId);
+      if (workspaceId) {
+        rememberJoinedWorkspace({
+          id: workspaceId,
+          name: invitation.workspaceName,
+          description: 'Workspace',
+          role: 'Developer',
+        });
+      }
+      const workspaceCards = await refreshWorkspaceHome();
+      if (workspaceId) onWorkspaceSelect(workspaceId);
+      if (!workspaceId) {
+        const acceptedWorkspace = workspaceCards.find((workspace) => workspace.name === invitation.workspaceName);
+        if (acceptedWorkspace) {
+          rememberWorkspaceCard(acceptedWorkspace);
+          onWorkspaceSelect(acceptedWorkspace.id);
+        }
+      }
+    } catch (err) {
+      if (isUnauthorizedError(err)) {
+        onSessionExpired();
+        return;
+      }
+      if (err instanceof ApiError && (err.status === 400 || err.status === 409)) {
+        const workspaceCards = await refreshWorkspaceHome();
+        const existingWorkspace = workspaceCards.find(
+          (workspace) => workspace.id === workspaceId || workspace.name === invitation.workspaceName
+        );
+
+        if (existingWorkspace) {
+          setInvitations((current) => current.filter((item) => item.invitationId !== invitationId));
+          onWorkspaceSelect(existingWorkspace.id);
+          return;
+        }
+      }
+      setError(err instanceof Error ? err.message : 'Unable to accept invitation.');
+    } finally {
+      setProcessingInviteId('');
+    }
+  };
+
+  const handleRejectInvitation = async (invitationId: string) => {
+    if (!invitationId) {
+      setError('This invitation is missing its id. Please refresh and try again.');
+      return;
+    }
+
+    setProcessingInviteId(invitationId);
+    setError('');
+
+    try {
+      await rejectInvitation(invitationId);
+      setInvitations((current) => current.filter((invitation) => invitation.invitationId !== invitationId));
+    } catch (err) {
+      if (isUnauthorizedError(err)) {
+        onSessionExpired();
+        return;
+      }
+      setError(err instanceof Error ? err.message : 'Unable to decline invitation.');
+    } finally {
+      setProcessingInviteId('');
+    }
+  };
+
+  const handleCreate = async () => {
     if (newWorkspaceName.trim()) {
-      // In real app, would create workspace
-      console.log('Creating workspace:', newWorkspaceName);
-      setShowCreateForm(false);
-      setNewWorkspaceName('');
-      setNewWorkspaceDesc('');
+      setSaving(true);
+      setError('');
+
+      try {
+        const workspace = await createWorkspace(newWorkspaceName, newWorkspaceDesc);
+        const workspaceCard: Workspace = {
+          id: workspace.id,
+          name: workspace.name,
+          description: workspace.description || newWorkspaceDesc,
+          memberCount: workspace.memberCount || 1,
+          role: 'Owner',
+        };
+        rememberWorkspaceCard(workspaceCard);
+        setWorkspaces((current) => [...current.filter((item) => item.id !== workspaceCard.id), workspaceCard]);
+        setShowCreateForm(false);
+        setNewWorkspaceName('');
+        setNewWorkspaceDesc('');
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unable to create workspace.');
+      } finally {
+        setSaving(false);
+      }
     }
   };
 
@@ -69,8 +262,72 @@ export function WorkspaceSelector({ onWorkspaceSelect }: WorkspaceSelectorProps)
         </div>
 
         {/* Workspaces grid */}
+        {error && (
+          <div
+            className="mb-4 rounded-lg border px-4 py-3 text-sm"
+            style={{ background: '#fffbeb', borderColor: '#fde68a', color: '#92400e' }}
+          >
+            {error}
+          </div>
+        )}
+
+        {loading && (
+          <p className="mb-4 text-center text-sm" style={{ color: 'var(--text-secondary)' }}>
+            Loading workspaces...
+          </p>
+        )}
+
+        {!loading && invitations.length > 0 && (
+          <div className="mb-6 rounded-xl border overflow-hidden" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+            <div className="flex items-center gap-2 px-4 py-3 border-b" style={{ borderColor: 'var(--border)' }}>
+              <Mail className="w-4 h-4" style={{ color: 'var(--primary)' }} />
+              <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                Workspace invitations
+              </h2>
+            </div>
+            <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
+              {invitations.map((invitation, index) => {
+                const processing = processingInviteId === invitation.invitationId;
+
+                return (
+                  <div key={invitation.invitationId || `${invitation.workspaceId}-${index}`} className="flex items-center justify-between gap-4 px-4 py-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                        {invitation.workspaceName}
+                      </p>
+                      <p className="text-xs truncate" style={{ color: 'var(--text-secondary)' }}>
+                        {invitation.workspaceOwner ? `Invited by ${invitation.workspaceOwner}` : 'Inviter details were not returned'}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button
+                        onClick={() => handleRejectInvitation(invitation.invitationId)}
+                        disabled={processing}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs transition-colors disabled:opacity-50"
+                        style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
+                      >
+                        <X className="w-3 h-3" />
+                        Decline
+                      </button>
+                      <button
+                        onClick={() => handleAcceptInvitation(invitation)}
+                        disabled={processing}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white transition-colors disabled:opacity-50"
+                        style={{ background: 'var(--primary)' }}
+                      >
+                        <Check className="w-3 h-3" />
+                        {processing ? 'Joining...' : 'Accept'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-          {MOCK_WORKSPACES.map((workspace) => (
+          {workspaces.map((workspace) => (
             <button
               key={workspace.id}
               onClick={() => onWorkspaceSelect(workspace.id)}
@@ -165,13 +422,14 @@ export function WorkspaceSelector({ onWorkspaceSelect }: WorkspaceSelectorProps)
               <div className="flex gap-3">
                 <button
                   onClick={handleCreate}
+                  disabled={saving}
                   className="flex-1 px-4 py-2 rounded-lg font-medium transition-colors"
                   style={{
-                    background: 'var(--primary)',
+                    background: saving ? 'var(--surface-hover)' : 'var(--primary)',
                     color: 'var(--text-on-primary)',
                   }}
                 >
-                  Create Workspace
+                  {saving ? 'Creating...' : 'Create Workspace'}
                 </button>
                 <button
                   onClick={() => {

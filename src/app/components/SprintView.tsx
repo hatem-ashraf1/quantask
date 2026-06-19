@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import {
   Plus, Calendar, CheckCircle2, Clock, PlayCircle, StopCircle,
-  AlertTriangle, ChevronDown, ChevronRight, Flag, X, Zap
+  AlertTriangle, ChevronDown, ChevronRight, Flag, X, Zap, Trash2
 } from 'lucide-react';
-import { SPRINTS, TASKS, Sprint } from '../data/mockData';
+import { SPRINTS, TASKS, Sprint } from '../data/store';
+import { activateSprint, closeSprint, createSprint, deleteSprint } from '../api/client';
+import { canManageProject } from '../utils/permissions';
 
 const STATUS_CONFIG = {
   future: { label: 'Future', color: '#6b6b82', bg: '#f6f6fa', dot: '#d1d1db' },
@@ -21,24 +23,57 @@ const PRIORITY_CONFIG = {
 interface SprintViewProps {
   projectId: string;
   onTaskClick: (taskId: string) => void;
+  onBacklogClick?: () => void;
 }
 
-function CreateSprintModal({ onClose }: { onClose: () => void }) {
+function CreateSprintModal({
+  projectId,
+  onClose,
+  onCreated,
+}: {
+  projectId: string;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
   const [name, setName] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [goal, setGoal] = useState('');
   const [overlap, setOverlap] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const canManage = canManageProject(projectId);
 
   const checkOverlap = (start: string, end: string) => {
     const s = new Date(start);
     const e = new Date(end);
     const hasOverlap = SPRINTS.some((sp) => {
+      if (sp.projectId !== projectId) return false;
       const spStart = new Date(sp.startDate);
       const spEnd = new Date(sp.endDate);
       return s <= spEnd && e >= spStart;
     });
     setOverlap(hasOverlap);
+  };
+
+  const handleCreate = async () => {
+    if (!canManage) {
+      setError('Only project managers can create sprints.');
+      return;
+    }
+    if (!name || !startDate || !endDate || overlap) return;
+    setSaving(true);
+    setError('');
+
+    try {
+      await createSprint({ projectId, name, startDate, endDate, goal });
+      onCreated();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to create sprint.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -57,6 +92,15 @@ function CreateSprintModal({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         <div className="p-5 space-y-4">
+          {error && (
+            <div
+              className="rounded-lg border px-3 py-2 text-xs"
+              style={{ background: '#fef2f2', borderColor: '#fecaca', color: '#b91c1c' }}
+            >
+              {error}
+            </div>
+          )}
+
           <div>
             <label className="block text-xs text-[var(--muted-foreground)] mb-1.5">Sprint name</label>
             <input
@@ -141,12 +185,12 @@ function CreateSprintModal({ onClose }: { onClose: () => void }) {
             Cancel
           </button>
           <button
-            disabled={!name || !startDate || !endDate || overlap}
-            onClick={onClose}
+            disabled={!canManage || !name || !startDate || !endDate || overlap || saving}
+            onClick={handleCreate}
             className="px-4 py-2 rounded-lg text-xs text-white transition-colors hover:opacity-90 disabled:opacity-40"
             style={{ background: 'var(--primary)' }}
           >
-            Create Sprint
+            {saving ? 'Creating...' : 'Create Sprint'}
           </button>
         </div>
       </div>
@@ -158,12 +202,21 @@ function SprintCard({
   sprint,
   projectId,
   onTaskClick,
+  onBacklogClick,
+  onChanged,
+  canManage,
 }: {
   sprint: Sprint;
   projectId: string;
   onTaskClick: (taskId: string) => void;
+  onBacklogClick?: () => void;
+  onChanged: () => void;
+  canManage: boolean;
 }) {
   const [expanded, setExpanded] = useState(sprint.status === 'active');
+  const [savingStatus, setSavingStatus] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [statusError, setStatusError] = useState('');
   const statusCfg = STATUS_CONFIG[sprint.status];
   const sprintTasks = TASKS.filter((t) => t.sprintId === sprint.id && !t.isDeleted);
   const doneTasks = sprintTasks.filter((t) => t.status === 'Done').length;
@@ -241,22 +294,48 @@ function SprintCard({
 
         {/* Action buttons */}
         <div className="flex items-center gap-1.5">
-          {sprint.status === 'future' && (
+          {canManage && sprint.status === 'future' && (
             <button
+              onClick={async () => {
+                setSavingStatus(true);
+                setStatusError('');
+                try {
+                  await activateSprint(sprint.id);
+                  onChanged();
+                } catch (err) {
+                  setStatusError(err instanceof Error ? err.message : 'Unable to activate sprint.');
+                } finally {
+                  setSavingStatus(false);
+                }
+              }}
+              disabled={savingStatus || deleting}
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs transition-colors hover:opacity-90"
               style={{ background: 'var(--primary)', color: 'white' }}
             >
               <PlayCircle size={12} />
-              Activate
+              {savingStatus ? 'Activating...' : 'Activate'}
             </button>
           )}
-          {sprint.status === 'active' && (
+          {canManage && sprint.status === 'active' && (
             <button
+              onClick={async () => {
+                setSavingStatus(true);
+                setStatusError('');
+                try {
+                  await closeSprint(sprint.id);
+                  onChanged();
+                } catch (err) {
+                  setStatusError(err instanceof Error ? err.message : 'Unable to complete sprint.');
+                } finally {
+                  setSavingStatus(false);
+                }
+              }}
+              disabled={savingStatus || deleting}
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs border transition-colors hover:bg-[var(--muted)]"
               style={{ borderColor: 'var(--border)', color: 'var(--foreground)' }}
             >
               <StopCircle size={12} />
-              Complete
+              {savingStatus ? 'Completing...' : 'Complete'}
             </button>
           )}
           {sprint.status === 'completed' && (
@@ -265,8 +344,38 @@ function SprintCard({
               Completed
             </div>
           )}
+          {canManage && (
+            <button
+              onClick={async () => {
+                if (!window.confirm(`Delete sprint "${sprint.name}"? Tasks in this sprint will move back to the backlog.`)) {
+                  return;
+                }
+                setDeleting(true);
+                setStatusError('');
+                try {
+                  await deleteSprint(sprint.id);
+                  onChanged();
+                } catch (err) {
+                  setStatusError(err instanceof Error ? err.message : 'Unable to delete sprint.');
+                } finally {
+                  setDeleting(false);
+                }
+              }}
+              disabled={savingStatus || deleting}
+              className="p-1.5 rounded-lg border text-red-500 transition-colors hover:bg-red-50 disabled:opacity-40"
+              style={{ borderColor: 'var(--border)' }}
+              title="Delete sprint"
+            >
+              <Trash2 size={12} />
+            </button>
+          )}
         </div>
       </div>
+      {statusError && (
+        <div className="px-5 py-2 text-xs text-red-600 border-b" style={{ borderColor: 'var(--border)', background: '#fef2f2' }}>
+          {statusError}
+        </div>
+      )}
 
       {/* Sprint goal */}
       {sprint.goal && expanded && (
@@ -287,7 +396,11 @@ function SprintCard({
           {sprintTasks.length === 0 ? (
             <div className="flex flex-col items-center py-8 text-center">
               <p className="text-xs text-[var(--muted-foreground)]">No tasks in this sprint</p>
-              <button className="mt-1.5 text-xs text-[var(--primary)] hover:underline flex items-center gap-1">
+              <button
+                onClick={onBacklogClick}
+                disabled={!canManage}
+                className="mt-1.5 text-xs text-[var(--primary)] hover:underline flex items-center gap-1 disabled:opacity-40 disabled:no-underline"
+              >
                 <Plus size={11} /> Add tasks from backlog
               </button>
             </div>
@@ -340,9 +453,11 @@ function SprintCard({
   );
 }
 
-export function SprintView({ projectId, onTaskClick }: SprintViewProps) {
+export function SprintView({ projectId, onTaskClick, onBacklogClick }: SprintViewProps) {
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [, setRefreshKey] = useState(0);
   const projectSprints = SPRINTS.filter((s) => s.projectId === projectId);
+  const canManage = canManageProject(projectId);
 
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ fontFamily: 'var(--font-family-body)' }}>
@@ -359,9 +474,11 @@ export function SprintView({ projectId, onTaskClick }: SprintViewProps) {
           </p>
         </div>
         <button
-          onClick={() => setShowCreateModal(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white"
+          onClick={() => canManage && setShowCreateModal(true)}
+          disabled={!canManage}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white disabled:opacity-40 disabled:cursor-not-allowed"
           style={{ background: 'var(--primary)' }}
+          title={canManage ? 'New sprint' : 'Only project managers can create sprints'}
         >
           <Plus size={12} />
           New Sprint
@@ -376,6 +493,9 @@ export function SprintView({ projectId, onTaskClick }: SprintViewProps) {
             sprint={sprint}
             projectId={projectId}
             onTaskClick={onTaskClick}
+            onBacklogClick={onBacklogClick}
+            onChanged={() => setRefreshKey((key) => key + 1)}
+            canManage={canManage}
           />
         ))}
 
@@ -386,19 +506,27 @@ export function SprintView({ projectId, onTaskClick }: SprintViewProps) {
             <p className="text-xs text-[var(--muted-foreground)] max-w-xs mb-4">
               Create your first sprint to start organizing work into time-boxed iterations.
             </p>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-white"
-              style={{ background: 'var(--primary)' }}
-            >
-              <Plus size={12} />
-              Create first sprint
-            </button>
+            {canManage && (
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-white"
+                style={{ background: 'var(--primary)' }}
+              >
+                <Plus size={12} />
+                Create first sprint
+              </button>
+            )}
           </div>
         )}
       </div>
 
-      {showCreateModal && <CreateSprintModal onClose={() => setShowCreateModal(false)} />}
+      {showCreateModal && (
+        <CreateSprintModal
+          projectId={projectId}
+          onClose={() => setShowCreateModal(false)}
+          onCreated={() => setRefreshKey((key) => key + 1)}
+        />
+      )}
     </div>
   );
 }

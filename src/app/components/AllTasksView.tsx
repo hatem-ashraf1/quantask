@@ -2,7 +2,7 @@ import { useState } from 'react';
 import {
   Flag, User2, Filter, Search, Calendar, ArrowUpRight, Lock, ChevronDown
 } from 'lucide-react';
-import { TASKS, USERS, getUserById, Task } from '../data/mockData';
+import { TASKS, USERS, getUserById, Task } from '../data/store';
 
 const PRIORITY_CONFIG = {
   critical: { label: 'Critical', color: '#ef4444', bg: '#fef2f2' },

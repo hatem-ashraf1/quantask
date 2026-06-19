@@ -3,12 +3,13 @@ import {
   Search, Bell, ChevronDown, CheckCircle2, Clock, AlertTriangle, X,
   User, LogOut, Settings, Shield, Zap
 } from 'lucide-react';
-import { NOTIFICATIONS, CURRENT_USER, Notification } from '../data/mockData';
+import { NOTIFICATIONS, CURRENT_USER, Notification } from '../data/store';
 
 interface TopBarProps {
   title: string;
   subtitle?: string;
   onAuthClick?: () => void;
+  onNavigate?: (view: 'settings' | 'members') => void;
 }
 
 const NOTIF_ICONS: Record<Notification['type'], React.ReactNode> = {
@@ -28,7 +29,7 @@ function formatRelative(timestamp: string) {
   return `${Math.floor(diff / 1440)}d ago`;
 }
 
-export function TopBar({ title, subtitle, onAuthClick }: TopBarProps) {
+export function TopBar({ title, subtitle, onAuthClick, onNavigate }: TopBarProps) {
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [notifications, setNotifications] = useState(NOTIFICATIONS);
@@ -202,12 +203,16 @@ export function TopBar({ title, subtitle, onAuthClick }: TopBarProps) {
                 </span>
               </div>
               {[
-                { icon: <User size={13} />, label: 'Profile' },
-                { icon: <Settings size={13} />, label: 'Preferences' },
-                { icon: <Shield size={13} />, label: 'Security' },
+                { icon: <User size={13} />, label: 'Profile', view: 'members' as const },
+                { icon: <Settings size={13} />, label: 'Preferences', view: 'settings' as const },
+                { icon: <Shield size={13} />, label: 'Security', view: 'settings' as const },
               ].map(({ icon, label }) => (
                 <button
                   key={label}
+                  onClick={() => {
+                    setProfileOpen(false);
+                    onNavigate?.(label === 'Profile' ? 'members' : 'settings');
+                  }}
                   className="w-full flex items-center gap-2.5 px-4 py-2 text-xs text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
                 >
                   <span className="text-[var(--muted-foreground)]">{icon}</span>

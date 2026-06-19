@@ -1,6 +1,7 @@
-import { useState } from 'react';
-import { Users, Mail, Plus, ChevronDown, Shield, X, Copy, Check, Search } from 'lucide-react';
-import { USERS, WORKSPACE, User } from '../data/mockData';
+import { useEffect, useState } from 'react';
+import { Users, Plus, Shield, X, Check, Search } from 'lucide-react';
+import { CURRENT_USER, USERS, WORKSPACE, User } from '../data/store';
+import { fetchWorkspaceMembers, inviteWorkspaceMember, updateWorkspaceMemberRole } from '../api/client';
 
 const AVATAR_COLORS: Record<string, string> = {
   u1: '#5c5cf5', u2: '#22c55e', u3: '#f59e0b', u4: '#ef4444', u5: '#8b5cf6', u6: '#06b6d4',
@@ -13,23 +14,30 @@ const ROLE_CONFIG = {
   viewer: { label: 'Viewer', color: '#6b6b82', bg: '#f6f6fa' },
 };
 
-function InviteModal({ onClose }: { onClose: () => void }) {
+function secondaryMemberLabel(user: User) {
+  if (user.email) return user.email;
+  if (user.githubHandle?.startsWith('id:')) return `Owner ID: ${user.githubHandle.slice(3)}`;
+  if (user.githubHandle) return `@${user.githubHandle}`;
+  return 'No profile details returned';
+}
+
+function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: () => Promise<void> }) {
   const [email, setEmail] = useState('');
-  const [role, setRole] = useState<User['role']>('developer');
   const [sent, setSent] = useState(false);
-  const [linkCopied, setLinkCopied] = useState(false);
-  const inviteLink = 'https://app.quantask.dev/invite/tok_abc123xyz';
+  const [error, setError] = useState('');
 
-  const handleSend = (e: React.FormEvent) => {
+  const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSent(true);
-    setTimeout(() => setSent(false), 2000);
-    setEmail('');
-  };
+    setError('');
 
-  const copyLink = () => {
-    setLinkCopied(true);
-    setTimeout(() => setLinkCopied(false), 2000);
+    try {
+      await inviteWorkspaceMember(WORKSPACE.id, email);
+      await onInvited();
+      setSent(true);
+      setEmail('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to send invitation.');
+    }
   };
 
   return (
@@ -45,6 +53,24 @@ function InviteModal({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         <div className="p-5 space-y-4">
+          {error && (
+            <div
+              className="rounded-lg border px-3 py-2 text-xs"
+              style={{ background: '#fef2f2', borderColor: '#fecaca', color: '#b91c1c' }}
+            >
+              {error}
+            </div>
+          )}
+
+          {sent && (
+            <div
+              className="rounded-lg border px-3 py-2 text-xs"
+              style={{ background: '#f0fdf4', borderColor: '#bbf7d0', color: '#15803d' }}
+            >
+              Invitation sent.
+            </div>
+          )}
+
           {/* Email invite */}
           <form onSubmit={handleSend} className="space-y-3">
             <div>
@@ -69,65 +95,11 @@ function InviteModal({ onClose }: { onClose: () => void }) {
               </div>
             </div>
 
-            {/* Role */}
-            <div>
-              <label className="block text-xs text-[var(--muted-foreground)] mb-1.5">Role</label>
-              <div className="grid grid-cols-2 gap-2">
-                {(['pm', 'developer', 'viewer'] as User['role'][]).map((r) => {
-                  const cfg = ROLE_CONFIG[r];
-                  return (
-                    <button
-                      key={r}
-                      type="button"
-                      onClick={() => setRole(r)}
-                      className="flex items-center gap-2 px-3 py-2 rounded-lg border text-xs transition-all"
-                      style={{
-                        borderColor: role === r ? 'var(--primary)' : 'var(--border)',
-                        background: role === r ? 'var(--secondary)' : 'transparent',
-                        color: role === r ? 'var(--primary)' : 'var(--foreground)',
-                      }}
-                    >
-                      <Shield size={11} style={{ color: cfg.color }} />
-                      {cfg.label}
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="mt-2 p-2.5 rounded-lg text-xs text-[var(--muted-foreground)]" style={{ background: 'var(--muted)' }}>
-                {role === 'pm' && 'Can manage sprints, approve tasks, and add dependencies.'}
-                {role === 'developer' && 'Can execute tasks, self-assign, post comments, and toggle sub-tasks.'}
-                {role === 'viewer' && 'Read-only access to boards and task details.'}
-              </div>
-            </div>
+            <p className="text-[10px] text-[var(--muted-foreground)]">
+              Invited members start with the backend default role. Owners can edit roles after they join.
+            </p>
           </form>
 
-          {/* Divider */}
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t" style={{ borderColor: 'var(--border)' }} />
-            </div>
-            <div className="relative flex justify-center">
-              <span className="px-3 text-xs bg-[var(--card)] text-[var(--muted-foreground)]">or share invite link</span>
-            </div>
-          </div>
-
-          {/* Invite link */}
-          <div
-            className="flex items-center gap-2 px-3 py-2 rounded-lg border"
-            style={{ borderColor: 'var(--border)', background: 'var(--input-background)' }}
-          >
-            <span className="flex-1 text-xs text-[var(--muted-foreground)] truncate" style={{ fontFamily: 'var(--font-family-mono)' }}>
-              {inviteLink}
-            </span>
-            <button
-              onClick={copyLink}
-              className="flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors hover:bg-[var(--muted)]"
-              style={{ color: linkCopied ? '#22c55e' : 'var(--primary)' }}
-            >
-              {linkCopied ? <Check size={12} /> : <Copy size={12} />}
-              {linkCopied ? 'Copied!' : 'Copy'}
-            </button>
-          </div>
         </div>
       </div>
     </div>
@@ -137,12 +109,53 @@ function InviteModal({ onClose }: { onClose: () => void }) {
 export function MembersDirectory() {
   const [showInvite, setShowInvite] = useState(false);
   const [search, setSearch] = useState('');
+  const [members, setMembers] = useState<User[]>([...USERS]);
+  const [loadingMembers, setLoadingMembers] = useState(false);
+  const [membersError, setMembersError] = useState('');
+  const [updatingRole, setUpdatingRole] = useState('');
 
-  const displayed = USERS.filter(
+  const loadMembers = async () => {
+    if (!WORKSPACE.id) return;
+
+    setLoadingMembers(true);
+    setMembersError('');
+
+    try {
+      const workspaceMembers = await fetchWorkspaceMembers(WORKSPACE.id);
+      setMembers([...workspaceMembers]);
+    } catch (err) {
+      setMembersError(err instanceof Error ? err.message : 'Unable to load workspace members.');
+      setMembers([...USERS]);
+    } finally {
+      setLoadingMembers(false);
+    }
+  };
+
+  useEffect(() => {
+    loadMembers();
+  }, [WORKSPACE.id]);
+
+  const displayed = members.filter(
     (u) =>
       u.name.toLowerCase().includes(search.toLowerCase()) ||
-      u.email.toLowerCase().includes(search.toLowerCase())
+      u.email.toLowerCase().includes(search.toLowerCase()) ||
+      secondaryMemberLabel(u).toLowerCase().includes(search.toLowerCase())
   );
+  const canManageRoles = CURRENT_USER.role === 'owner' || WORKSPACE.ownerId === CURRENT_USER.id;
+
+  const handleRoleChange = async (userId: string, role: User['role']) => {
+    setMembersError('');
+    setUpdatingRole(userId);
+
+    try {
+      await updateWorkspaceMemberRole(WORKSPACE.id, userId, role);
+      setMembers((prev) => prev.map((member) => (member.id === userId ? { ...member, role } : member)));
+    } catch (err) {
+      setMembersError(err instanceof Error ? err.message : 'Unable to update member role.');
+    } finally {
+      setUpdatingRole('');
+    }
+  };
 
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ fontFamily: 'var(--font-family-body)' }}>
@@ -153,7 +166,9 @@ export function MembersDirectory() {
       >
         <div>
           <h2 className="text-sm text-[var(--foreground)]">Members</h2>
-          <p className="text-xs text-[var(--muted-foreground)] mt-0.5">{USERS.length} members in {WORKSPACE.name}</p>
+          <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+            {loadingMembers ? 'Loading members...' : `${members.length} members in ${WORKSPACE.name}`}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <div className="relative">
@@ -180,6 +195,15 @@ export function MembersDirectory() {
 
       {/* Table */}
       <div className="flex-1 overflow-y-auto p-5">
+        {membersError && (
+          <div
+            className="mb-4 rounded-lg border px-3 py-2 text-xs"
+            style={{ background: '#fffbeb', borderColor: '#fde68a', color: '#92400e' }}
+          >
+            {membersError}
+          </div>
+        )}
+
         <div
           className="rounded-xl border overflow-hidden"
           style={{ borderColor: 'var(--border)' }}
@@ -198,8 +222,8 @@ export function MembersDirectory() {
 
           {/* Rows */}
           {displayed.map((user, idx) => {
-            const roleCfg = ROLE_CONFIG[user.role];
-            const isOwner = user.role === 'owner';
+            const roleCfg = ROLE_CONFIG[user.role] || ROLE_CONFIG.developer;
+            const isOwner = user.role === 'owner' || user.id === WORKSPACE.ownerId;
 
             return (
               <div
@@ -224,13 +248,15 @@ export function MembersDirectory() {
                       className="text-[10px] text-[var(--muted-foreground)]"
                       style={{ fontFamily: 'var(--font-family-mono)' }}
                     >
-                      @{user.githubHandle}
+                      {secondaryMemberLabel(user)}
                     </p>
                   </div>
                 </div>
 
                 {/* Email */}
-                <span className="text-xs text-[var(--muted-foreground)]">{user.email}</span>
+                <span className="text-xs text-[var(--muted-foreground)]">
+                  {user.email || (user.githubHandle?.startsWith('id:') ? user.id : '-')}
+                </span>
 
                 {/* Role */}
                 <span
@@ -251,22 +277,24 @@ export function MembersDirectory() {
 
                 {/* Actions */}
                 <div className="flex items-center gap-1">
-                  {!isOwner && (
-                    <>
-                      <button
-                        className="px-2 py-1 rounded text-[10px] text-[var(--muted-foreground)] hover:bg-[var(--muted)] transition-colors"
-                      >
-                        Edit role
-                      </button>
-                      <button
-                        className="px-2 py-1 rounded text-[10px] text-red-500 hover:bg-red-50 transition-colors"
-                      >
-                        Remove
-                      </button>
-                    </>
-                  )}
                   {isOwner && (
                     <span className="text-[10px] text-[var(--muted-foreground)] italic">Owner</span>
+                  )}
+                  {!isOwner && canManageRoles && (
+                    <select
+                      value={user.role}
+                      disabled={updatingRole === user.id}
+                      onChange={(event) => handleRoleChange(user.id, event.target.value as User['role'])}
+                      className="px-2 py-1 rounded-lg border text-[10px] outline-none"
+                      style={{ background: 'var(--input-background)', borderColor: 'var(--border)', color: 'var(--foreground)' }}
+                    >
+                      <option value="pm">PM</option>
+                      <option value="developer">Developer</option>
+                      <option value="viewer">Viewer</option>
+                    </select>
+                  )}
+                  {!isOwner && !canManageRoles && (
+                    <span className="text-[10px] text-[var(--muted-foreground)] italic">View only</span>
                   )}
                 </div>
               </div>
@@ -277,12 +305,14 @@ export function MembersDirectory() {
         {displayed.length === 0 && (
           <div className="text-center py-12">
             <Users size={32} className="mx-auto text-[var(--muted)] mb-2" />
-            <p className="text-sm text-[var(--muted-foreground)]">No members match your search</p>
+            <p className="text-sm text-[var(--muted-foreground)]">
+              {search ? 'No members match your search' : 'No workspace members were returned'}
+            </p>
           </div>
         )}
       </div>
 
-      {showInvite && <InviteModal onClose={() => setShowInvite(false)} />}
+      {showInvite && <InviteModal onClose={() => setShowInvite(false)} onInvited={loadMembers} />}
     </div>
   );
 }

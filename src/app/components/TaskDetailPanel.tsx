@@ -1,13 +1,15 @@
-import { useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import {
   X, Flag, Calendar, User2, ChevronDown, Sparkles, Paperclip, Send,
   Lock, Plus, AlertTriangle, CheckSquare, Square, ExternalLink,
   GitBranch, Clock, RotateCcw, Shield, Circle, CheckCircle2,
-  MessageSquare, Activity, FileText, Download, Zap
+  MessageSquare, Activity, FileText, Download, Zap, Trash2
 } from 'lucide-react';
 import {
   Task, TaskStatus, TASKS, USERS, SPRINTS, getUserById, getSprintById, AI_SUGGESTIONS
-} from '../data/mockData';
+} from '../data/store';
+import { addComment, addDependency, addSubTask, assignTask, deleteTask, fetchTask, toggleSubTask, updateTaskStatus } from '../api/client';
+import { canDeleteTaskInProject } from '../utils/permissions';
 
 const PRIORITY_CONFIG = {
   critical: { label: 'Critical', color: '#ef4444' },
@@ -212,9 +214,10 @@ function AIAssignmentSheet({
 interface TaskDetailPanelProps {
   taskId: string | null;
   onClose: () => void;
+  onDeleted?: (taskId: string) => void;
 }
 
-export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
+export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelProps) {
   const initialTask = TASKS.find((t) => t.id === taskId) || null;
   const [task, setTask] = useState<Task | null>(initialTask);
   const [activeTab, setActiveTab] = useState<'activity' | 'details'>('activity');
@@ -223,6 +226,31 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [showSubtaskWarning, setShowSubtaskWarning] = useState(false);
   const [pendingStatus, setPendingStatus] = useState<TaskStatus | null>(null);
+  const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
+  const [showSubtaskInput, setShowSubtaskInput] = useState(false);
+  const [showDependencyInput, setShowDependencyInput] = useState(false);
+  const [dependencyTaskId, setDependencyTaskId] = useState('');
+  const [panelError, setPanelError] = useState('');
+  const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => {
+    if (!taskId) return;
+
+    let active = true;
+    const fallback = TASKS.find((item) => item.id === taskId);
+
+    fetchTask(taskId, fallback?.projectId, fallback?.sprintId)
+      .then((loadedTask) => {
+        if (active) setTask(loadedTask);
+      })
+      .catch((err) => {
+        if (active) setPanelError(err instanceof Error ? err.message : 'Unable to load task details.');
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [taskId]);
 
   if (!task) return null;
 
@@ -230,61 +258,136 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
   const sprint = task.sprintId ? getSprintById(task.sprintId) : null;
   const incompleteSubs = task.subTasks.filter((s) => !s.completed).length;
   const completedSubs = task.subTasks.filter((s) => s.completed).length;
+  const canDeleteTask = canDeleteTaskInProject(task.projectId);
 
-  const handleStatusChange = (newStatus: TaskStatus) => {
+  const replaceTask = (nextTask: Task) => {
+    const localTask = TASKS.find((item) => item.id === nextTask.id);
+    if (localTask) Object.assign(localTask, nextTask);
+    setTask(nextTask);
+  };
+
+  const handleStatusChange = async (newStatus: TaskStatus) => {
     setShowStatusDropdown(false);
+    if (task.isBlocked && (newStatus === 'Review' || newStatus === 'Done')) {
+      setPanelError('All task dependencies must be completed before moving this task to Review or Done.');
+      return;
+    }
     if (newStatus === 'Review' && incompleteSubs > 0) {
       setPendingStatus(newStatus);
       setShowSubtaskWarning(true);
       return;
     }
-    if (task.isBlocked && newStatus === 'InProgress') return;
+    setPanelError('');
+    const previous = task;
     setTask((prev) => prev ? { ...prev, status: newStatus } : prev);
+    try {
+      const updated = await updateTaskStatus(task.id, newStatus);
+      if (updated) replaceTask(updated);
+    } catch (err) {
+      setTask(previous);
+      setPanelError(err instanceof Error ? err.message : 'Unable to update status.');
+    }
   };
 
-  const confirmSubtaskWarning = () => {
+  const confirmSubtaskWarning = async () => {
     if (!pendingStatus) return;
-    setTask((prev) =>
-      prev
-        ? {
-            ...prev,
-            status: pendingStatus,
-            subTasks: prev.subTasks.map((s) => ({ ...s, completed: true })),
-          }
-        : prev
-    );
+    await handleStatusChange(pendingStatus);
     setPendingStatus(null);
     setShowSubtaskWarning(false);
   };
 
-  const handleSubtaskToggle = (subId: string) => {
-    setTask((prev) => {
-      if (!prev) return prev;
-      const updatedSubs = prev.subTasks.map((s) =>
-        s.id === subId ? { ...s, completed: !s.completed } : s
-      );
-      const allDone = updatedSubs.every((s) => s.completed);
-      return { ...prev, subTasks: updatedSubs, status: allDone ? 'Review' : prev.status };
-    });
+  const handleSubtaskToggle = async (subId: string) => {
+    const subtask = task.subTasks.find((item) => item.id === subId);
+    if (!subtask) return;
+    setPanelError('');
+    try {
+      replaceTask(await toggleSubTask(task.id, subId, !subtask.completed));
+    } catch (err) {
+      setPanelError(err instanceof Error ? err.message : 'Unable to update sub-task.');
+    }
   };
 
-  const handleAssign = (userId: string) => {
+  const handleAssign = async (userId: string) => {
+    setPanelError('');
+    const previous = task;
     setTask((prev) => prev ? { ...prev, assigneeId: userId } : prev);
+    try {
+      replaceTask(await assignTask(task.id, userId));
+    } catch (err) {
+      setTask(previous);
+      setPanelError(err instanceof Error ? err.message : 'Unable to assign task.');
+    }
   };
 
-  const handleAddComment = () => {
+  const handleAddSubtask = async () => {
+    if (!newSubtaskTitle.trim()) return;
+    setPanelError('');
+    try {
+      replaceTask(await addSubTask(task.id, newSubtaskTitle.trim()));
+      setNewSubtaskTitle('');
+      setShowSubtaskInput(false);
+    } catch (err) {
+      setPanelError(err instanceof Error ? err.message : 'Unable to add sub-task.');
+    }
+  };
+
+  const handleAddComment = async () => {
     if (!comment.trim()) return;
-    const newComment = {
-      id: `c${Date.now()}`,
-      type: 'comment' as const,
-      authorId: 'u1',
-      content: comment,
-      createdAt: new Date().toISOString(),
-    };
-    setTask((prev) =>
-      prev ? { ...prev, activity: [...prev.activity, newComment] } : prev
-    );
-    setComment('');
+    setPanelError('');
+    try {
+      const created = await addComment(task.id, comment.trim());
+      const newComment = {
+        id: created.id || created.Id,
+        type: 'comment' as const,
+        authorId: created.authorId || created.AuthorId,
+        content: created.content || created.Content || created.body || created.Body || comment.trim(),
+        createdAt: created.createdAt || created.CreatedAt || new Date().toISOString(),
+        attachments: (created.attachments || created.Attachments)?.map((attachment) => ({
+          name: attachment.name || attachment.fileName || attachment.FileName || 'Attachment',
+          size: attachment.size || (attachment.sizeBytes || attachment.SizeBytes ? `${Math.round((attachment.sizeBytes || attachment.SizeBytes || 0) / 1024)}KB` : ''),
+          url: attachment.url || attachment.storageUri || attachment.StorageUri || '#',
+        })),
+      };
+      replaceTask({ ...task, activity: [...task.activity, newComment] });
+      setComment('');
+    } catch (err) {
+      setPanelError(err instanceof Error ? err.message : 'Unable to add comment.');
+    }
+  };
+
+  const handleAddDependency = async () => {
+    if (!dependencyTaskId) return;
+    setPanelError('');
+    try {
+      replaceTask(await addDependency(task.id, dependencyTaskId));
+      setDependencyTaskId('');
+      setShowDependencyInput(false);
+    } catch (err) {
+      setPanelError(err instanceof Error ? err.message : 'Unable to add dependency.');
+    }
+  };
+
+  const handleDeleteTask = async () => {
+    if (!canDeleteTask) {
+      setPanelError('Only project managers can delete tasks.');
+      return;
+    }
+
+    if (!window.confirm(`Delete task "${task.title}"? It will move to Trash and can be restored later.`)) {
+      return;
+    }
+
+    setDeleting(true);
+    setPanelError('');
+    try {
+      await deleteTask(task.id);
+      onDeleted?.(task.id);
+      onClose();
+    } catch (err) {
+      setPanelError(err instanceof Error ? err.message : 'Unable to delete task.');
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const statusCfg = STATUS_CONFIG[task.status];
@@ -332,6 +435,17 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
               {task.title}
             </h2>
           </div>
+          {canDeleteTask && (
+            <button
+              onClick={handleDeleteTask}
+              disabled={deleting}
+              className="p-1.5 rounded-lg border text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40 flex-shrink-0"
+              style={{ borderColor: 'var(--border)' }}
+              title="Move task to Trash"
+            >
+              <Trash2 size={15} />
+            </button>
+          )}
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg hover:bg-[var(--muted)] text-[var(--muted-foreground)] flex-shrink-0"
@@ -346,7 +460,6 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
           <div className="relative">
             <button
               onClick={() => {
-                if (task.isBlocked && task.status === 'ToDo') return;
                 setShowStatusDropdown(!showStatusDropdown);
               }}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border transition-colors hover:border-[var(--primary)]"
@@ -355,7 +468,7 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
                 borderColor: 'var(--border)',
                 color: statusCfg.color,
               }}
-              title={task.isBlocked ? 'Cannot change status while blocked' : undefined}
+              title={task.isBlocked ? 'Review and Done require completed dependencies' : undefined}
             >
               <span className="w-1.5 h-1.5 rounded-full" style={{ background: statusCfg.color }} />
               {statusCfg.label}
@@ -367,7 +480,7 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
                 style={{ background: 'var(--popover)', borderColor: 'var(--border)' }}
               >
                 {(Object.entries(STATUS_CONFIG) as [TaskStatus, typeof STATUS_CONFIG[TaskStatus]][]).map(([s, cfg]) => {
-                  const isDisabled = s === 'InProgress' && task.isBlocked;
+                  const isDisabled = task.isBlocked && (s === 'Review' || s === 'Done');
                   return (
                     <button
                       key={s}
@@ -396,6 +509,11 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
             {priorityCfg.label}
           </button>
         </div>
+        {panelError && (
+          <div className="px-5 py-2 text-xs text-red-600 border-b" style={{ background: '#fef2f2', borderColor: 'var(--border)' }}>
+            {panelError}
+          </div>
+        )}
 
         {/* Body — scrollable */}
         <div className="flex-1 overflow-y-auto">
@@ -417,10 +535,32 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
                       ({completedSubs}/{task.subTasks.length})
                     </span>
                   </label>
-                  <button className="flex items-center gap-1 text-xs text-[var(--primary)] hover:underline">
+                  <button
+                    onClick={() => setShowSubtaskInput(true)}
+                    className="flex items-center gap-1 text-xs text-[var(--primary)] hover:underline"
+                  >
                     <Plus size={11} /> Add
                   </button>
                 </div>
+                {showSubtaskInput && (
+                  <div className="flex gap-2 mb-2">
+                    <input
+                      type="text"
+                      value={newSubtaskTitle}
+                      onChange={(e) => setNewSubtaskTitle(e.target.value)}
+                      placeholder="New sub-task"
+                      className="flex-1 px-2.5 py-1.5 rounded-lg border text-xs outline-none"
+                      style={{ background: 'var(--input-background)', borderColor: 'var(--border)', color: 'var(--foreground)' }}
+                    />
+                    <button
+                      onClick={handleAddSubtask}
+                      className="px-3 py-1.5 rounded-lg text-xs text-white"
+                      style={{ background: 'var(--primary)' }}
+                    >
+                      Add
+                    </button>
+                  </div>
+                )}
                 {task.subTasks.length > 0 ? (
                   <div className="space-y-1.5">
                     {task.subTasks.map((st) => (
@@ -467,10 +607,38 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <label className="text-xs text-[var(--muted-foreground)]">Dependencies</label>
-                  <button className="flex items-center gap-1 text-xs text-[var(--primary)] hover:underline">
+                  <button
+                    onClick={() => setShowDependencyInput(true)}
+                    className="flex items-center gap-1 text-xs text-[var(--primary)] hover:underline"
+                  >
                     <Plus size={11} /> Add Prerequisite
                   </button>
                 </div>
+                {showDependencyInput && (
+                  <div className="flex gap-2 mb-2">
+                    <select
+                      value={dependencyTaskId}
+                      onChange={(e) => setDependencyTaskId(e.target.value)}
+                      className="flex-1 px-2.5 py-1.5 rounded-lg border text-xs outline-none"
+                      style={{ background: 'var(--input-background)', borderColor: 'var(--border)', color: 'var(--foreground)' }}
+                    >
+                      <option value="">Choose task</option>
+                      {TASKS.filter((item) => item.projectId === task.projectId && item.id !== task.id && !item.isDeleted).map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.key} - {item.title}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={handleAddDependency}
+                      disabled={!dependencyTaskId}
+                      className="px-3 py-1.5 rounded-lg text-xs text-white disabled:opacity-50"
+                      style={{ background: 'var(--primary)' }}
+                    >
+                      Add
+                    </button>
+                  </div>
+                )}
                 {task.dependencies.length > 0 ? (
                   <div className="space-y-1.5">
                     {task.dependencies.map((dep) => {
@@ -531,7 +699,10 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
                 {activeTab === 'activity' && (
                   <div>
                     {/* Load older */}
-                    <button className="w-full text-center text-xs text-[var(--primary)] hover:underline py-1 mb-3">
+                    <button
+                      onClick={() => setPanelError('All available activity is already loaded.')}
+                      className="w-full text-center text-xs text-[var(--primary)] hover:underline py-1 mb-3"
+                    >
                       Load older activity
                     </button>
 
@@ -627,7 +798,10 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
                           style={{ borderColor: 'var(--border)' }}
                         >
                           <div className="flex items-center gap-1">
-                            <button className="p-1.5 rounded hover:bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors">
+                            <button
+                              onClick={() => setPanelError('File upload is not connected in this build yet.')}
+                              className="p-1.5 rounded hover:bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+                            >
                               <Paperclip size={13} />
                             </button>
                             <span className="text-[10px] text-[var(--muted-foreground)]">Max 5MB</span>
@@ -722,19 +896,20 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
                   )}
                 </div>
 
-                {/* AI Assign button */}
-                <button
-                  onClick={() => setShowAI(true)}
-                  className="mt-2 w-full flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg text-xs transition-all hover:opacity-90"
-                  style={{
-                    background: 'var(--ai-bg)',
-                    color: 'var(--ai-primary)',
-                    border: '1px solid var(--ai-secondary)',
-                  }}
-                >
-                  <Sparkles size={12} />
-                  Ask AI for Best Match
-                </button>
+                {AI_SUGGESTIONS.length > 0 && (
+                  <button
+                    onClick={() => setShowAI(true)}
+                    className="mt-2 w-full flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg text-xs transition-all hover:opacity-90"
+                    style={{
+                      background: 'var(--ai-bg)',
+                      color: 'var(--ai-primary)',
+                      border: '1px solid var(--ai-secondary)',
+                    }}
+                  >
+                    <Sparkles size={12} />
+                    Ask AI for Best Match
+                  </button>
+                )}
               </div>
 
               {/* Priority */}

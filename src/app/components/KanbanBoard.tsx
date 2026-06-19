@@ -1,10 +1,12 @@
-import { useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import {
   Plus, AlertTriangle, Lock, Flag, Calendar, ChevronRight,
   MoreHorizontal, Sparkles, User2
 } from 'lucide-react';
-import { Task, TaskStatus, TASKS, USERS, getUserById } from '../data/mockData';
+import { Task, TaskStatus, TASKS, USERS, getUserById } from '../data/store';
 import { TaskCreateForm } from './TaskCreateForm';
+import { createTask, updateTaskStatus } from '../api/client';
+import { canCreateTaskInProject } from '../utils/permissions';
 
 const COLUMNS: { id: TaskStatus; label: string; color: string; dot: string }[] = [
   { id: 'ToDo', label: 'To Do', color: '#6b6b82', dot: '#d1d1db' },
@@ -188,8 +190,13 @@ export function KanbanBoard({ projectId, onTaskClick }: KanbanBoardProps) {
   const [tasks, setTasks] = useState(TASKS.filter((t) => t.projectId === projectId && !t.isDeleted));
   const [dragOverCol, setDragOverCol] = useState<TaskStatus | null>(null);
   const dragTaskRef = useRef<Task | null>(null);
-  const [concurrencyToast, setConcurrencyToast] = useState(false);
+  const [statusError, setStatusError] = useState('');
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const canCreateTasks = canCreateTaskInProject(projectId);
+
+  useEffect(() => {
+    setTasks(TASKS.filter((t) => t.projectId === projectId && !t.isDeleted));
+  }, [projectId]);
 
   const handleDragStart = (e: React.DragEvent, task: Task) => {
     dragTaskRef.current = task;
@@ -201,25 +208,34 @@ export function KanbanBoard({ projectId, onTaskClick }: KanbanBoardProps) {
     const task = dragTaskRef.current;
     if (!task || task.status === targetStatus) return;
 
-    // Simulate concurrency conflict randomly (10% chance for demo)
-    if (Math.random() < 0.1) {
-      setConcurrencyToast(true);
-      setTimeout(() => setConcurrencyToast(false), 4000);
-      return;
-    }
-
-    setTasks((prev) =>
-      prev.map((t) => (t.id === task.id ? { ...t, status: targetStatus } : t))
-    );
+    setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: targetStatus } : t)));
+    setStatusError('');
+    updateTaskStatus(task.id, targetStatus)
+      .then(() => {
+        setTasks(TASKS.filter((t) => t.projectId === projectId && !t.isDeleted));
+      })
+      .catch((err) => {
+        setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: task.status } : t)));
+        setStatusError(err instanceof Error ? err.message : 'Unable to update task status.');
+        setTimeout(() => setStatusError(''), 5000);
+      });
     setDragOverCol(null);
     dragTaskRef.current = null;
   };
 
+  const openCreateForm = () => {
+    if (!canCreateTasks) {
+      setStatusError('Only project managers can create tasks.');
+      setTimeout(() => setStatusError(''), 5000);
+      return;
+    }
+    setShowCreateForm(true);
+  };
 
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ fontFamily: 'var(--font-family-body)' }}>
-      {/* Concurrency Toast */}
-      {concurrencyToast && (
+      {/* Status update toast */}
+      {statusError && (
         <div
           className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-3 rounded-xl border shadow-xl"
           style={{
@@ -231,11 +247,11 @@ export function KanbanBoard({ projectId, onTaskClick }: KanbanBoardProps) {
           <AlertTriangle size={16} className="text-red-500 flex-shrink-0" />
           <div>
             <p className="text-xs text-red-700">
-              This task was modified by another user. Please refresh.
+              {statusError}
             </p>
           </div>
           <button
-            onClick={() => setConcurrencyToast(false)}
+            onClick={() => setStatusError('')}
             className="ml-auto text-red-400 hover:text-red-600"
           >
             ✕
@@ -275,8 +291,9 @@ export function KanbanBoard({ projectId, onTaskClick }: KanbanBoardProps) {
                     </span>
                   </div>
                   <button
-                    onClick={() => setShowCreateForm(true)}
-                    className="p-0.5 rounded hover:bg-[var(--card)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+                    onClick={openCreateForm}
+                    className="p-0.5 rounded hover:bg-[var(--card)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors disabled:opacity-40"
+                    title={canCreateTasks ? 'Add task' : 'Only project managers can create tasks'}
                   >
                     <Plus size={13} />
                   </button>
@@ -300,8 +317,9 @@ export function KanbanBoard({ projectId, onTaskClick }: KanbanBoardProps) {
                     >
                       <p className="text-xs text-[var(--muted-foreground)] mb-2">No tasks</p>
                       <button
-                        onClick={() => setShowCreateForm(true)}
+                        onClick={openCreateForm}
                         className="text-xs text-[var(--primary)] hover:underline flex items-center gap-1"
+                        title={canCreateTasks ? 'Add task' : 'Only project managers can create tasks'}
                       >
                         <Plus size={11} /> Add task
                       </button>
@@ -318,9 +336,11 @@ export function KanbanBoard({ projectId, onTaskClick }: KanbanBoardProps) {
         <TaskCreateForm
           projectId={projectId}
           onClose={() => setShowCreateForm(false)}
-          onCreate={(taskData) => {
-            console.log('Creating task:', taskData);
-            // In real app, would create task
+          onCreate={async (taskData) => {
+            const created = await createTask(taskData);
+            if (created.projectId === projectId && !created.isDeleted) {
+              setTasks((prev) => [...prev.filter((task) => task.id !== created.id), created]);
+            }
             setShowCreateForm(false);
           }}
         />

@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import {
   Flag, Calendar, User2, Filter, ChevronDown, Plus, Search,
-  MoreHorizontal, GitBranch, Lock, ArrowUpRight
+  MoreHorizontal, GitBranch, Lock, ArrowUpRight, AlertTriangle
 } from 'lucide-react';
-import { TASKS, USERS, SPRINTS, getUserById, Task } from '../data/mockData';
+import { TASKS, USERS, SPRINTS, getUserById, Task } from '../data/store';
 import { TaskCreateForm } from './TaskCreateForm';
+import { createTask, moveTaskToSprint } from '../api/client';
+import { canCreateTaskInProject } from '../utils/permissions';
 
 const PRIORITY_CONFIG = {
   critical: { label: 'Critical', color: '#ef4444', bg: '#fef2f2' },
@@ -36,6 +38,10 @@ export function BacklogView({ projectId, onTaskClick }: BacklogViewProps) {
   const [search, setSearch] = useState('');
   const [filterOpen, setFilterOpen] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const [movingTaskId, setMovingTaskId] = useState<string | null>(null);
+  const [, setRefreshKey] = useState(0);
+  const canCreateTasks = canCreateTaskInProject(projectId);
 
   const allTasks = TASKS.filter((t) => t.projectId === projectId && !t.isDeleted);
   const backlogTasks = allTasks.filter((t) => !t.sprintId || t.sprintId === null);
@@ -51,6 +57,7 @@ export function BacklogView({ projectId, onTaskClick }: BacklogViewProps) {
     acc[s.id] = s;
     return acc;
   }, {} as Record<string, typeof SPRINTS[0]>);
+  const sprintOptions = SPRINTS.filter((s) => s.projectId === projectId && s.status !== 'completed');
 
   const grouped: Record<string, Task[]> = {};
   displayed.forEach((t) => {
@@ -59,8 +66,52 @@ export function BacklogView({ projectId, onTaskClick }: BacklogViewProps) {
     grouped[key].push(t);
   });
 
+  const openCreateForm = () => {
+    if (!canCreateTasks) {
+      setCreateError('Only project managers can create tasks.');
+      setTimeout(() => setCreateError(''), 5000);
+      return;
+    }
+    setShowCreateForm(true);
+  };
+
+  const handleMoveTaskToSprint = async (task: Task, sprintId: string | null) => {
+    if (!canCreateTasks) {
+      setCreateError('Only project managers can move tasks between sprints.');
+      setTimeout(() => setCreateError(''), 5000);
+      return;
+    }
+
+    setMovingTaskId(task.id);
+    setCreateError('');
+    try {
+      await moveTaskToSprint(task.id, sprintId);
+      setRefreshKey((key) => key + 1);
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : 'Unable to move task to sprint.');
+      setTimeout(() => setCreateError(''), 5000);
+    } finally {
+      setMovingTaskId(null);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ fontFamily: 'var(--font-family-body)' }}>
+      {createError && (
+        <div
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-3 rounded-xl border shadow-xl"
+          style={{ background: '#fef2f2', borderColor: '#fecaca', minWidth: '320px' }}
+        >
+          <AlertTriangle size={16} className="text-red-500 flex-shrink-0" />
+          <p className="text-xs text-red-700">{createError}</p>
+          <button
+            onClick={() => setCreateError('')}
+            className="ml-auto text-red-400 hover:text-red-600"
+          >
+            X
+          </button>
+        </div>
+      )}
       {/* Toolbar */}
       <div
         className="flex items-center gap-3 px-5 py-3 border-b flex-shrink-0"
@@ -200,9 +251,10 @@ export function BacklogView({ projectId, onTaskClick }: BacklogViewProps) {
             {displayed.length} tasks
           </span>
           <button
-            onClick={() => setShowCreateForm(true)}
+            onClick={openCreateForm}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white"
             style={{ background: 'var(--primary)' }}
+            title={canCreateTasks ? 'Add task' : 'Only project managers can create tasks'}
           >
             <Plus size={12} />
             Add Task
@@ -329,6 +381,29 @@ export function BacklogView({ projectId, onTaskClick }: BacklogViewProps) {
                         {task.dueDate || '—'}
                       </span>
 
+                      {canCreateTasks && (
+                        <select
+                          value={task.sprintId || ''}
+                          disabled={movingTaskId === task.id}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => handleMoveTaskToSprint(task, e.target.value || null)}
+                          className="w-36 px-2 py-1 rounded-md border text-[10px] outline-none flex-shrink-0"
+                          style={{
+                            background: 'var(--input-background)',
+                            borderColor: 'var(--border)',
+                            color: 'var(--foreground)',
+                          }}
+                          title="Move task to sprint"
+                        >
+                          <option value="">Backlog</option>
+                          {sprintOptions.map((sprint) => (
+                            <option key={sprint.id} value={sprint.id}>
+                              {sprint.name}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+
                       <ArrowUpRight size={12} className="text-[var(--muted-foreground)] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
                     </div>
                   );
@@ -356,9 +431,10 @@ export function BacklogView({ projectId, onTaskClick }: BacklogViewProps) {
         <TaskCreateForm
           projectId={projectId}
           onClose={() => setShowCreateForm(false)}
-          onCreate={(taskData) => {
-            console.log('Creating task:', taskData);
-            // In real app, would create task
+          onCreate={async (taskData) => {
+            await createTask(taskData);
+            setRefreshKey((key) => key + 1);
+            setShowCreateForm(false);
           }}
         />
       )}
