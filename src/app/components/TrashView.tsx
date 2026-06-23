@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Trash2, RotateCcw, AlertTriangle, Search } from 'lucide-react';
 import { TASKS, WORKSPACE, Task, getUserById } from '../data/store';
 import { fetchDeletedTasks, restoreTask } from '../api/client';
-import { canDeleteTaskInProject } from '../utils/permissions';
+import { canRestoreTaskInProject } from '../utils/permissions';
 
 const AVATAR_COLORS: Record<string, string> = {
   u1: '#5c5cf5', u2: '#22c55e', u3: '#f59e0b', u4: '#ef4444', u5: '#8b5cf6', u6: '#06b6d4',
@@ -165,7 +165,7 @@ export function TrashView({ onRestore }: TrashViewProps) {
             {deletedTasks.map((task, idx) => {
               const lastActivity = getLastActivity(task);
               const deletedBy = lastActivity?.userId ? getUserById(lastActivity.userId) : null;
-              const canRestoreTask = canDeleteTaskInProject(task.projectId);
+              const canRestoreTask = canRestoreTaskInProject(task.projectId);
               const deletedAt = lastActivity?.time
                 ? new Date(lastActivity.time).toLocaleDateString('en-US', {
                     month: 'short',

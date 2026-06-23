@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X } from 'lucide-react';
 import { CURRENT_USER, USERS, WORKSPACE } from '../data/store';
 import { assignProjectMember, createProject } from '../api/client';
+import { canCreateProject } from '../utils/permissions';
 
 interface ProjectCreateModalProps {
   onClose: () => void;
@@ -15,8 +16,8 @@ export function ProjectCreateModal({ onClose, onCreated }: ProjectCreateModalPro
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const workspaceMembers = USERS.filter((user) => user.id !== CURRENT_USER.id && user.role !== 'viewer');
-  const canCreateProject = CURRENT_USER.role === 'owner' || CURRENT_USER.role === 'pm';
+  const workspaceMembers = USERS.filter((user) => user.id !== CURRENT_USER.id);
+  const canCreateProjects = canCreateProject();
 
   const toggleMember = (userId: string) => {
     setSelectedMemberIds((prev) =>
@@ -28,7 +29,7 @@ export function ProjectCreateModal({ onClose, onCreated }: ProjectCreateModalPro
 
   const handleCreate = async () => {
     if (!name.trim()) return;
-    if (!canCreateProject) {
+    if (!canCreateProjects) {
       setError('Only workspace owners and PMs can create projects.');
       return;
     }
@@ -73,7 +74,7 @@ export function ProjectCreateModal({ onClose, onCreated }: ProjectCreateModalPro
               {error}
             </div>
           )}
-          {!canCreateProject && (
+          {!canCreateProjects && (
             <div className="rounded-lg border px-3 py-2 text-xs" style={{ background: '#fffbeb', borderColor: '#fde68a', color: '#92400e' }}>
               Only workspace owners and PMs can create projects.
             </div>
@@ -156,7 +157,7 @@ export function ProjectCreateModal({ onClose, onCreated }: ProjectCreateModalPro
           </button>
           <button
             onClick={handleCreate}
-            disabled={!name.trim() || saving || !canCreateProject}
+            disabled={!name.trim() || saving || !canCreateProjects}
             className="px-4 py-2 rounded-lg text-sm text-white transition-colors hover:opacity-90 disabled:opacity-50"
             style={{ background: 'var(--primary)' }}
           >

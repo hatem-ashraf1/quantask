@@ -13,6 +13,19 @@ import {
   User,
   Workspace,
 } from '../data/store';
+import { emitApiAuthorizationEvent } from '../authorization/apiEvents';
+import {
+  clearAuthorizationState,
+  normalizeProjectRole,
+  normalizeWorkspaceRole,
+  removeProjectAuthorizationRole,
+  removeWorkspaceAuthorizationRole,
+  replaceProjectAuthorizationRoles,
+  setAuthorizationScope,
+  setAuthorizationUser,
+  setProjectAuthorizationRole,
+  setWorkspaceAuthorizationRole,
+} from '../authorization/store';
 
 type ApiResponse<T> = {
   success: boolean;
@@ -23,6 +36,7 @@ type ApiResponse<T> = {
 
 type ApiRequestInit = RequestInit & {
   skipAuthRefresh?: boolean;
+  suppressAuthEvents?: boolean;
 };
 
 export class ApiError extends Error {
@@ -143,6 +157,95 @@ export type RememberedWorkspace = {
   memberCount: number;
   role: string;
   joinedAt: string;
+};
+
+export type InvitationAcceptanceResult = {
+  workspaceId?: string;
+  WorkspaceId?: string;
+};
+
+export type ConnectGitHubRequest = {
+  repositoryOwner: string;
+  repositoryName: string;
+  accessToken: string;
+};
+
+export type GitHubConnection = {
+  projectId: string;
+  repositoryFullName: string;
+  defaultBranch: string;
+  repositoryCreatedAt: string;
+  lastPushAt?: string;
+  lastSyncedAt?: string;
+  isPrivate: boolean;
+  repositoryHtmlUrl: string;
+  isConnected: boolean;
+  lastSyncStatus?: string;
+  lastSyncError?: string;
+  lastSyncStartedAt?: string;
+  lastSyncCompletedAt?: string;
+};
+
+export type GitHubLanguageStat = {
+  language: string;
+  bytes: number;
+  percentage: number;
+};
+
+export type GitHubContributorStat = {
+  login: string;
+  displayName?: string;
+  commits: number;
+  percentage: number;
+  avatarUrl?: string;
+  htmlUrl?: string;
+};
+
+export type GitHubAnalytics = {
+  projectId: string;
+  repositoryFullName: string;
+  isPrivate: boolean;
+  repositoryHtmlUrl: string;
+  defaultBranch: string;
+  totalCommits: number;
+  totalPullRequests: number;
+  openPullRequests: number;
+  closedPullRequests: number;
+  mergedPullRequests: number;
+  openIssues: number;
+  closedIssues: number;
+  languages: GitHubLanguageStat[];
+  contributors: GitHubContributorStat[];
+  busFactorRisk: string;
+  topContributor?: string;
+  topContributorCommitPercentage: number;
+  isDataTruncated: boolean;
+  dataLimitWarning?: string;
+  lastSyncStatus?: string;
+  lastSyncError?: string;
+  lastSyncStartedAt?: string;
+  lastSyncCompletedAt?: string;
+  syncedAt: string;
+};
+
+export type ReportStatus = 'Pending' | 'Processing' | 'Completed' | 'Failed' | 'Expired';
+
+export type CreateReportRequest = {
+  projectId?: string;
+  fromDate?: string;
+  toDate?: string;
+  includeGitHub: boolean;
+};
+
+export type ReportJob = {
+  jobId: string;
+  reportName: string;
+  status: ReportStatus;
+  downloadUrl?: string;
+  errorMessage?: string;
+  createdAt: string;
+  completedAt?: string;
+  expiresAt?: string;
 };
 
 type ApiProject = {
@@ -288,6 +391,7 @@ type ApiAuditEntry = {
 const STORAGE_KEYS = {
   accessToken: 'quantask_access_token',
   refreshToken: 'quantask_refresh_token',
+  currentUser: 'quantask_current_user',
   workspaceOwners: 'quantask_workspace_owners',
   joinedWorkspaces: 'quantask_joined_workspaces',
 };
@@ -296,7 +400,7 @@ const DEFAULT_API_BASE_URL = 'http://quantask.runasp.net';
 const API_BASE_URL = ((import.meta.env.VITE_API_BASE_URL as string | undefined) || DEFAULT_API_BASE_URL).replace(/\/$/, '');
 
 function authHeaders() {
-  const token = localStorage.getItem(STORAGE_KEYS.accessToken);
+  const token = sessionStorage.getItem(STORAGE_KEYS.accessToken);
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
@@ -393,7 +497,8 @@ function parseResponsePayload(text: string) {
 async function request<T>(path: string, options: ApiRequestInit = {}): Promise<T> {
   let response: Response;
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
-  const { skipAuthRefresh, ...fetchOptions } = options;
+  const { skipAuthRefresh, suppressAuthEvents, ...fetchOptions } = options;
+  const hadAuthenticatedSession = Boolean(sessionStorage.getItem(STORAGE_KEYS.accessToken));
 
   try {
     response = await fetch(`${API_BASE_URL}${normalizePath(path)}`, {
@@ -417,7 +522,7 @@ async function request<T>(path: string, options: ApiRequestInit = {}): Promise<T
   const text = await response.text();
   const payload = parseResponsePayload(text);
 
-  if (response.status === 401 && !skipAuthRefresh && localStorage.getItem(STORAGE_KEYS.refreshToken)) {
+  if (response.status === 401 && !skipAuthRefresh && sessionStorage.getItem(STORAGE_KEYS.refreshToken)) {
     const refreshed = await refreshSession().catch(() => undefined);
     if (refreshed) {
       return request<T>(path, { ...options, skipAuthRefresh: true });
@@ -425,7 +530,27 @@ async function request<T>(path: string, options: ApiRequestInit = {}): Promise<T
   }
 
   if (!response.ok) {
-    throw new ApiError(getApiErrorMessage(payload, fallbackErrorMessage(response.status, response.statusText)), response.status);
+    const message = getApiErrorMessage(payload, fallbackErrorMessage(response.status, response.statusText));
+    if (response.status === 403 && !suppressAuthEvents) {
+      emitApiAuthorizationEvent({
+        type: 'forbidden',
+        message: 'You do not have the required permissions to perform this action.',
+      });
+    }
+    if (
+      response.status === 401 &&
+      hadAuthenticatedSession &&
+      sessionStorage.getItem(STORAGE_KEYS.accessToken) &&
+      !suppressAuthEvents
+    ) {
+      clearAuthSession();
+      clearAuthorizationState();
+      emitApiAuthorizationEvent({
+        type: 'unauthorized',
+        message: 'Your session has expired. Please sign in again.',
+      });
+    }
+    throw new ApiError(message, response.status);
   }
 
   if (payload && typeof payload === 'object' && 'success' in payload) {
@@ -514,15 +639,6 @@ function toApiTaskStatus(status: TaskStatus) {
 function toApiPriority(priority?: TaskPriority) {
   if (!priority) return undefined;
   return { low: 0, medium: 1, high: 2, critical: 3 }[priority];
-}
-
-function toApiWorkspaceRole(role: User['role']) {
-  return {
-    owner: 'Owner',
-    pm: 'ProjectManager',
-    developer: 'Developer',
-    viewer: 'Viewer',
-  }[role];
 }
 
 function toApiProjectRole(role: User['role']) {
@@ -662,7 +778,13 @@ function apiUserId(user: Partial<ApiUser | ApiProjectMember>) {
 
 function mapUser(user: ApiUser | ApiProjectMember): User {
   const nestedUser = user.user || user.User;
-  const raw = nestedUser ? { ...nestedUser, ...user, role: user.role || user.Role || nestedUser.role || nestedUser.Role } : user;
+  const raw = nestedUser
+    ? {
+        ...nestedUser,
+        ...user,
+        role: user.role ?? user.Role ?? nestedUser.role ?? nestedUser.Role,
+      }
+    : user;
   const id = apiUserId(raw) || raw.email || raw.Email || 'unknown-user';
   const email = raw.email || raw.Email || '';
   const username = raw.username || raw.userName || raw.UserName || '';
@@ -672,7 +794,7 @@ function mapUser(user: ApiUser | ApiProjectMember): User {
     name,
     email,
     avatar: initials(name),
-    role: normalizeRole(raw.role || raw.Role),
+    role: normalizeRole(raw.role ?? raw.Role),
     githubHandle: raw.githubHandle || username || '',
     skills: raw.skills || [],
     joinedDate: dateOnly(raw.joinedDate || raw.joinedAt || raw.JoinedAt || raw.createdAt || raw.CreatedAt) || '',
@@ -758,6 +880,48 @@ function mapWorkspaceMembers(workspace: ApiWorkspace) {
     }
     return user;
   });
+}
+
+function applyCurrentWorkspaceRole(workspace: ApiWorkspace, workspaceMembers = getWorkspaceMemberDtos(workspace)) {
+  const currentWorkspaceMember = workspaceMembers.find(
+    (member) => apiUserId(member) === CURRENT_USER.id
+  );
+  const resolvedRole =
+    workspace.ownerId === CURRENT_USER.id
+      ? 'owner'
+      : normalizeRole(currentWorkspaceMember?.role ?? currentWorkspaceMember?.Role ?? workspace.role);
+
+  setAuthorizationUser(CURRENT_USER.id);
+  setWorkspaceAuthorizationRole(
+    workspace.id,
+    normalizeWorkspaceRole(workspace.role, workspace.ownerId === CURRENT_USER.id)
+  );
+  CURRENT_USER.role = resolvedRole;
+
+  const storedCurrentUser = USERS.find((user) => user.id === CURRENT_USER.id);
+  if (storedCurrentUser) {
+    storedCurrentUser.role = resolvedRole;
+  }
+  persistCurrentUserSession();
+
+  return resolvedRole;
+}
+
+export function applySelectedWorkspaceRole(role?: string, workspaceId?: string) {
+  const resolvedRole = normalizeRole(role);
+  if (workspaceId) {
+    setAuthorizationScope(workspaceId);
+    setWorkspaceAuthorizationRole(workspaceId, normalizeWorkspaceRole(role));
+  }
+  CURRENT_USER.role = resolvedRole;
+
+  const storedCurrentUser = USERS.find((user) => user.id === CURRENT_USER.id);
+  if (storedCurrentUser) {
+    storedCurrentUser.role = resolvedRole;
+  }
+  persistCurrentUserSession();
+
+  return resolvedRole;
 }
 
 function mergeUsers(users: User[]) {
@@ -994,17 +1158,39 @@ function getTokenMessage(data: TokenResponse | undefined, fallback: string) {
   return data?.message || data?.Message || fallback;
 }
 
+function persistCurrentUserSession() {
+  if (!CURRENT_USER.id && !CURRENT_USER.email) return;
+  sessionStorage.setItem(STORAGE_KEYS.currentUser, JSON.stringify(CURRENT_USER));
+}
+
+export function restoreCurrentUserSession() {
+  try {
+    const storedUser = JSON.parse(sessionStorage.getItem(STORAGE_KEYS.currentUser) || 'null') as User | null;
+    if (!storedUser?.id && !storedUser?.email) return false;
+
+    Object.assign(CURRENT_USER, storedUser);
+    setAuthorizationUser(CURRENT_USER.id);
+    upsertUsers([CURRENT_USER]);
+    return true;
+  } catch {
+    sessionStorage.removeItem(STORAGE_KEYS.currentUser);
+    return false;
+  }
+}
+
 function applyAuthSession(data: TokenResponse | undefined, fallbackEmail?: string) {
   const accessToken = getTokenValue(data, 'access');
   const refreshToken = getTokenValue(data, 'refresh');
   const user = getTokenUser(data);
 
-  if (accessToken) localStorage.setItem(STORAGE_KEYS.accessToken, accessToken);
-  if (refreshToken) localStorage.setItem(STORAGE_KEYS.refreshToken, refreshToken);
+  if (accessToken) sessionStorage.setItem(STORAGE_KEYS.accessToken, accessToken);
+  if (refreshToken) sessionStorage.setItem(STORAGE_KEYS.refreshToken, refreshToken);
 
   if (user) {
     Object.assign(CURRENT_USER, mapUser(user));
+    setAuthorizationUser(CURRENT_USER.id);
     upsertUsers([CURRENT_USER]);
+    persistCurrentUserSession();
     return CURRENT_USER;
   }
 
@@ -1020,7 +1206,9 @@ function applyAuthSession(data: TokenResponse | undefined, fallbackEmail?: strin
       skills: CURRENT_USER.skills || [],
       joinedDate: CURRENT_USER.joinedDate || '',
     });
+    setAuthorizationUser(CURRENT_USER.id);
     upsertUsers([CURRENT_USER]);
+    persistCurrentUserSession();
     return CURRENT_USER;
   }
 
@@ -1042,11 +1230,23 @@ export async function login(email: string, password: string) {
   return getTokenUser(data) || CURRENT_USER;
 }
 
-export async function register(fullName: string, email: string, password: string, confirmPassword = password) {
+export async function register(
+  fullName: string,
+  email: string,
+  password: string,
+  confirmPassword = password,
+  gitHubHandle?: string,
+) {
   return request<MessageResult>('/api/auth/signup', {
     method: 'POST',
     skipAuthRefresh: true,
-    body: JSON.stringify({ fullName, email, password, confirmPassword }),
+    body: JSON.stringify({
+      fullName,
+      email,
+      password,
+      confirmPassword,
+      gitHubHandle: gitHubHandle?.trim() || null,
+    }),
   });
 }
 
@@ -1066,7 +1266,7 @@ export async function resendEmailConfirmation(email: string) {
   });
 }
 
-export async function refreshSession(refreshToken = localStorage.getItem(STORAGE_KEYS.refreshToken) || '') {
+export async function refreshSession(refreshToken = sessionStorage.getItem(STORAGE_KEYS.refreshToken) || '') {
   if (!refreshToken) return undefined;
 
   const data = await request<TokenResponse>('/api/auth/refresh', {
@@ -1082,21 +1282,29 @@ export async function refreshSession(refreshToken = localStorage.getItem(STORAGE
 }
 
 function clearAuthSession() {
+  sessionStorage.removeItem(STORAGE_KEYS.accessToken);
+  sessionStorage.removeItem(STORAGE_KEYS.refreshToken);
+  sessionStorage.removeItem(STORAGE_KEYS.currentUser);
   localStorage.removeItem(STORAGE_KEYS.accessToken);
   localStorage.removeItem(STORAGE_KEYS.refreshToken);
+  clearAuthorizationState();
 }
 
 export async function logoutFromBackend() {
-  const refreshToken = localStorage.getItem(STORAGE_KEYS.refreshToken) || '';
+  const refreshToken = sessionStorage.getItem(STORAGE_KEYS.refreshToken) || '';
 
   try {
     if (refreshToken) {
       await request('/api/auth/logout', {
         method: 'POST',
         skipAuthRefresh: true,
+        suppressAuthEvents: true,
         body: JSON.stringify({ refreshToken }),
       });
     }
+  } catch {
+    // Local logout must still succeed when the refresh token is expired,
+    // revoked, or the backend logout endpoint is temporarily unavailable.
   } finally {
     clearAuthSession();
   }
@@ -1118,14 +1326,13 @@ export async function resetPassword(email: string, otp: string, newPassword: str
   });
 }
 
-export async function acceptInvitation(invitationId: string, email?: string) {
-  const data = await request<TokenResponse | undefined>(`/api/workspaces/invitations/${invitationId}/accept`, {
+export async function acceptInvitation(invitationToken: string) {
+  return request<InvitationAcceptanceResult | undefined>(
+    `/api/workspaces/invitations/${encodeURIComponent(invitationToken)}/accept`,
+    {
     method: 'POST',
-    skipAuthRefresh: true,
-  });
-
-  applyAuthSession(data, email);
-  return getTokenUser(data);
+    }
+  );
 }
 
 export function logout() {
@@ -1133,7 +1340,9 @@ export function logout() {
 }
 
 export function hasStoredSession() {
-  return Boolean(localStorage.getItem(STORAGE_KEYS.accessToken));
+  localStorage.removeItem(STORAGE_KEYS.accessToken);
+  localStorage.removeItem(STORAGE_KEYS.refreshToken);
+  return Boolean(sessionStorage.getItem(STORAGE_KEYS.accessToken));
 }
 
 export function isUnauthorizedError(error: unknown) {
@@ -1165,6 +1374,9 @@ export async function createWorkspace(name: string, description: string) {
   CURRENT_USER.role = 'owner';
   const stored = USERS.find((user) => user.id === CURRENT_USER.id);
   if (stored) stored.role = 'owner';
+  persistCurrentUserSession();
+  setAuthorizationScope(workspace.id);
+  setWorkspaceAuthorizationRole(workspace.id, 'workspace-owner');
   rememberJoinedWorkspace({
     id: workspace.id,
     name: workspace.name,
@@ -1187,11 +1399,13 @@ export async function updateWorkspace(workspaceId: string, name: string, descrip
 export async function deleteWorkspace(workspaceId: string) {
   await request(`/api/workspaces/${workspaceId}`, { method: 'DELETE' });
   forgetJoinedWorkspace(workspaceId);
+  removeWorkspaceAuthorizationRole(workspaceId);
 }
 
 export async function leaveWorkspace(workspaceId: string) {
   await request(`/api/workspaces/${workspaceId}/members/me`, { method: 'DELETE' });
   forgetJoinedWorkspace(workspaceId);
+  removeWorkspaceAuthorizationRole(workspaceId);
 }
 
 export async function transferWorkspaceOwnership(workspaceId: string, newOwnerId: string) {
@@ -1203,21 +1417,8 @@ export async function transferWorkspaceOwnership(workspaceId: string, newOwnerId
   const nextOwner = USERS.find((user) => user.id === newOwnerId);
   if (nextOwner) nextOwner.role = 'owner';
   CURRENT_USER.role = 'pm';
-}
-
-export async function updateWorkspaceMemberRole(workspaceId: string, userId: string, role: User['role']) {
-  if (role === 'owner') {
-    throw new Error('Use ownership transfer to make a member the workspace owner.');
-  }
-
-  await request(`/api/workspaces/${workspaceId}/members/${userId}/role`, {
-    method: 'PUT',
-    body: JSON.stringify({ role: toApiWorkspaceRole(role) }),
-  });
-
-  const user = USERS.find((item) => item.id === userId);
-  if (user) user.role = role;
-  return user;
+  setWorkspaceAuthorizationRole(workspaceId, 'workspace-member');
+  persistCurrentUserSession();
 }
 
 export async function createProject(input: CreateProjectInput) {
@@ -1232,6 +1433,7 @@ export async function createProject(input: CreateProjectInput) {
   });
   const project = mapProject(created);
   upsertWorkspaceProject(project);
+  setProjectAuthorizationRole(project.id, 'project-manager');
   return project;
 }
 
@@ -1240,6 +1442,7 @@ export async function deleteProject(projectId: string) {
   replaceArray(PROJECTS, PROJECTS.filter((project) => project.id !== projectId));
   replaceArray(SPRINTS, SPRINTS.filter((sprint) => sprint.projectId !== projectId));
   replaceArray(TASKS, TASKS.filter((task) => task.projectId !== projectId));
+  removeProjectAuthorizationRole(projectId);
 }
 
 export async function fetchProjectMembers(projectId: string) {
@@ -1269,6 +1472,14 @@ export async function fetchProjectMembers(projectId: string) {
     project.memberIds = mappedMembers.map((member) => member.id);
   }
 
+  const currentMember = mappedMembers.find((member) => member.id === CURRENT_USER.id);
+  const currentProjectRole = normalizeProjectRole(currentMember?.role);
+  if (currentProjectRole) {
+    setProjectAuthorizationRole(projectId, currentProjectRole);
+  } else {
+    removeProjectAuthorizationRole(projectId);
+  }
+
   return mappedMembers;
 }
 
@@ -1282,11 +1493,34 @@ export async function assignProjectMember(projectId: string, userId: string, rol
   if (project && !project.memberIds.includes(userId)) {
     project.memberIds = [...project.memberIds, userId];
   }
+  if (userId === CURRENT_USER.id) {
+    const projectRole = normalizeProjectRole(toApiProjectRole(role));
+    if (projectRole) setProjectAuthorizationRole(projectId, projectRole);
+  }
 
   return fetchProjectMembers(projectId).catch(() => {
     const user = USERS.find((item) => item.id === userId);
     return user ? [user] : [];
   });
+}
+
+export async function updateProjectMemberRole(projectId: string, userId: string, role: User['role']) {
+  await request(`/api/projects/${projectId}/members/${userId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ newRole: toApiProjectRole(role) }),
+  });
+
+  if (userId === CURRENT_USER.id) {
+    const projectRole = normalizeProjectRole(toApiProjectRole(role));
+    if (projectRole) setProjectAuthorizationRole(projectId, projectRole);
+  }
+
+  const members = await fetchProjectMembers(projectId);
+  const updatedMember = members.find((member) => member.id === userId);
+  if (!updatedMember || updatedMember.role !== role) {
+    throw new Error('The backend accepted the role update but did not return the requested project role.');
+  }
+  return members;
 }
 
 export async function removeProjectMember(projectId: string, userId: string) {
@@ -1300,6 +1534,7 @@ export async function removeProjectMember(projectId: string, userId: string) {
   if (project) {
     project.memberIds = project.memberIds.filter((memberId) => memberId !== userId);
   }
+  if (userId === CURRENT_USER.id) removeProjectAuthorizationRole(projectId);
 }
 
 export async function inviteWorkspaceMember(workspaceId: string, email: string, role: User['role'] = 'developer', message?: string) {
@@ -1314,6 +1549,7 @@ export async function fetchWorkspaceMembers(workspaceId: string) {
   Object.assign(WORKSPACE, mapWorkspace(workspace));
   const workspaceMembers = mapWorkspaceMembers(workspace);
   const workspaceOwner = mapWorkspaceOwner(workspace);
+  applyCurrentWorkspaceRole(workspace);
 
   const workspaceProjects = await request<ApiProject[]>(`/api/workspaces/${workspaceId}/projects`).catch(() => workspace.projects || []);
   const projectMembers = workspaceProjects.flatMap((project) => (project.members || []).map(mapUser));
@@ -1332,18 +1568,16 @@ export async function hydrateWorkspace(workspaceId: string) {
 
   const workspaceMembers = getWorkspaceMemberDtos(workspace);
   const mappedWorkspaceMembers = mapWorkspaceMembers(workspace);
+  const currentWorkspaceRole = applyCurrentWorkspaceRole(workspace, workspaceMembers);
+  replaceProjectAuthorizationRoles({});
   upsertUsers(mappedWorkspaceMembers);
 
-  const currentWorkspaceMember = workspaceMembers.find((member) => member.id === CURRENT_USER.id || ('userId' in member && member.userId === CURRENT_USER.id));
-  if (currentWorkspaceMember?.role || workspace.ownerId === CURRENT_USER.id) {
-    CURRENT_USER.role = workspace.ownerId === CURRENT_USER.id ? 'owner' : normalizeRole(currentWorkspaceMember?.role);
-  }
   rememberJoinedWorkspace({
     id: workspace.id,
     name: workspace.name,
     description: workspace.description || 'Workspace',
     memberCount: workspace.memberCount || workspaceMembers.length || mappedWorkspaceMembers.length || 0,
-    role: workspace.ownerId === CURRENT_USER.id ? 'Owner' : workspace.role || currentWorkspaceMember?.role || 'Developer',
+    role: currentWorkspaceRole,
   });
 
   const workspaceProjects = await request<ApiProject[]>(`/api/workspaces/${workspaceId}/projects`).catch(() => workspace.projects || []);
@@ -1369,6 +1603,13 @@ export async function hydrateWorkspace(workspaceId: string) {
 
   projectBoards.forEach(({ project, board }) => {
     const members = board.members || project.members || [];
+    const currentProjectMember = members.find((member) => apiUserId(member) === CURRENT_USER.id);
+    const currentProjectRole = normalizeProjectRole(
+      currentProjectMember?.role ?? currentProjectMember?.Role
+    );
+    if (currentProjectRole) {
+      setProjectAuthorizationRole(project.id, currentProjectRole);
+    }
     nextUsers.push(...members.map((member) => {
       const user = mapUser(member);
       if (workspace.ownerId && user.id === workspace.ownerId) {
@@ -1623,6 +1864,105 @@ export async function deleteSprint(sprintId: string) {
       project.sprintIds = project.sprintIds.filter((id) => id !== sprintId);
     }
   }
+}
+
+export async function connectGitHubRepository(projectId: string, input: ConnectGitHubRequest) {
+  return request<GitHubConnection>(`/api/projects/${projectId}/github/connect`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function getGitHubAnalytics(projectId: string) {
+  return request<GitHubAnalytics>(`/api/projects/${projectId}/github/analytics`);
+}
+
+export async function syncGitHubAnalytics(projectId: string) {
+  return request<GitHubAnalytics>(`/api/projects/${projectId}/github/sync`, {
+    method: 'POST',
+  });
+}
+
+export async function createWorkspaceReport(workspaceId: string, input: CreateReportRequest) {
+  return request<ReportJob>(`/api/workspaces/${workspaceId}/reports`, {
+    method: 'POST',
+    body: JSON.stringify({
+      projectId: input.projectId || null,
+      fromDate: input.fromDate || null,
+      toDate: input.toDate || null,
+      includeGitHub: input.includeGitHub,
+    }),
+  });
+}
+
+export async function getReportStatus(jobId: string) {
+  return request<ReportJob>(`/api/reports/${jobId}/status`);
+}
+
+export async function getMyReports() {
+  return request<ReportJob[]>('/api/reports/my');
+}
+
+function reportFileName(contentDisposition: string | null, fallback: string) {
+  const utf8Match = contentDisposition?.match(/filename\*=UTF-8''([^;]+)/i);
+  const basicMatch = contentDisposition?.match(/filename="?([^";]+)"?/i);
+  const value = utf8Match?.[1] || basicMatch?.[1];
+
+  if (!value) return fallback;
+
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+export async function downloadReport(jobId: string, fallbackName = 'QuanTask Report.pdf', retried = false) {
+  let response: Response;
+
+  try {
+    response = await fetch(`${API_BASE_URL}${normalizePath(`/api/reports/${jobId}/download`)}`, {
+      headers: authHeaders(),
+    });
+  } catch {
+    throw new Error(`Unable to reach the backend at ${API_BASE_URL}.`);
+  }
+
+  if (response.status === 401 && !retried && sessionStorage.getItem(STORAGE_KEYS.refreshToken)) {
+    const refreshed = await refreshSession().catch(() => undefined);
+    if (refreshed) return downloadReport(jobId, fallbackName, true);
+  }
+
+  if (!response.ok) {
+    const payload = parseResponsePayload(await response.text());
+    if (response.status === 403) {
+      emitApiAuthorizationEvent({
+        type: 'forbidden',
+        message: 'You do not have the required permissions to perform this action.',
+      });
+    }
+    if (response.status === 401 && sessionStorage.getItem(STORAGE_KEYS.accessToken)) {
+      clearAuthSession();
+      emitApiAuthorizationEvent({
+        type: 'unauthorized',
+        message: 'Your session has expired. Please sign in again.',
+      });
+    }
+    throw new ApiError(
+      getApiErrorMessage(payload, fallbackErrorMessage(response.status, response.statusText)),
+      response.status
+    );
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = reportFileName(response.headers.get('Content-Disposition'), fallbackName);
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 export const apiConfig = {

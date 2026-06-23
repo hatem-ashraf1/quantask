@@ -27,6 +27,7 @@ interface AuthScreenProps {
   onAuth: () => void;
   mode?: AuthMode;
   inviteToken?: string;
+  invitationPending?: boolean;
 }
 
 function modeTitle(mode: AuthMode) {
@@ -73,8 +74,20 @@ const PASSWORD_RULES = [
   { label: 'One special character', test: (value: string) => /[^a-zA-Z0-9]/.test(value) },
 ];
 
-function validateSignup(fullName: string, password: string, confirmPassword: string) {
+const GITHUB_HANDLE_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/;
+
+function validateSignup(
+  fullName: string,
+  password: string,
+  confirmPassword: string,
+  gitHubHandle: string,
+) {
   if (!fullName.trim()) return 'Full name is required.';
+
+  const normalizedGitHubHandle = gitHubHandle.trim();
+  if (normalizedGitHubHandle && !GITHUB_HANDLE_PATTERN.test(normalizedGitHubHandle)) {
+    return 'GitHub handle may contain only letters, numbers, and hyphens, and cannot start or end with a hyphen.';
+  }
 
   const missingRule = PASSWORD_RULES.find((rule) => !rule.test(password));
   if (missingRule) return `Password must include: ${missingRule.label.toLowerCase()}.`;
@@ -83,7 +96,12 @@ function validateSignup(fullName: string, password: string, confirmPassword: str
   return '';
 }
 
-export function AuthScreen({ onAuth, mode: initialMode = 'login', inviteToken }: AuthScreenProps) {
+export function AuthScreen({
+  onAuth,
+  mode: initialMode = 'login',
+  inviteToken,
+  invitationPending = false,
+}: AuthScreenProps) {
   const [mode, setMode] = useState<AuthMode>(inviteToken ? 'join' : initialMode);
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState('');
@@ -94,6 +112,7 @@ export function AuthScreen({ onAuth, mode: initialMode = 'login', inviteToken }:
   const [confirmationToken, setConfirmationToken] = useState('');
   const [otp, setOtp] = useState('');
   const [name, setName] = useState('');
+  const [gitHubHandle, setGitHubHandle] = useState('');
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
   const [joinAccepted, setJoinAccepted] = useState(false);
@@ -110,6 +129,7 @@ export function AuthScreen({ onAuth, mode: initialMode = 'login', inviteToken }:
     setMode(nextMode);
     if (nextMode !== 'register') {
       setConfirmPassword('');
+      setGitHubHandle('');
     }
   };
 
@@ -129,20 +149,27 @@ export function AuthScreen({ onAuth, mode: initialMode = 'login', inviteToken }:
 
       if (mode === 'join') {
         if (!inviteToken) throw new Error('Invitation token is missing.');
-        await acceptInvitation(inviteToken, normalizedEmail);
+        await acceptInvitation(inviteToken);
         setJoinAccepted(true);
         onAuth();
         return;
       }
 
       if (mode === 'register') {
-        const validationError = validateSignup(name, password, confirmPassword);
+        const validationError = validateSignup(name, password, confirmPassword, gitHubHandle);
         if (validationError) throw new Error(validationError);
 
-        const result = await register(name.trim(), normalizedEmail, password, confirmPassword);
+        const result = await register(
+          name.trim(),
+          normalizedEmail,
+          password,
+          confirmPassword,
+          gitHubHandle,
+        );
         setNotice(result?.message || result?.Message || 'Account created. Confirm your email, then sign in.');
         setPassword('');
         setConfirmPassword('');
+        setGitHubHandle('');
         setConfirmationToken('');
         setMode('confirm');
         return;
@@ -281,6 +308,18 @@ export function AuthScreen({ onAuth, mode: initialMode = 'login', inviteToken }:
                 <p className="text-sm text-[var(--muted-foreground)]">{modeDescription(mode)}</p>
               </div>
 
+              {invitationPending && mode !== 'join' && (
+                <div
+                  className="mb-5 rounded-lg border px-3 py-2.5 flex items-start gap-2.5"
+                  style={{ background: 'var(--secondary)', borderColor: 'var(--border)' }}
+                >
+                  <Building2 size={14} className="text-[var(--primary)] flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-[var(--muted-foreground)]">
+                    Sign in or create an account to continue accepting your workspace invitation.
+                  </p>
+                </div>
+              )}
+
               {mode !== 'join' && mode !== 'confirm' && mode !== 'forgot' && mode !== 'reset' && (
                 <>
                   <button
@@ -325,31 +364,63 @@ export function AuthScreen({ onAuth, mode: initialMode = 'login', inviteToken }:
                 )}
 
                 {mode === 'register' && (
-                  <div>
-                    <label className="block text-xs text-[var(--muted-foreground)] mb-1.5">Full name</label>
-                    <div className="relative">
-                      <User
-                        size={14}
-                        className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]"
-                      />
-                      <input
-                        type="text"
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        placeholder="Alex Rivera"
-                        required
-                        autoComplete="name"
-                        className="w-full pl-9 pr-4 py-2.5 rounded-lg text-sm outline-none border transition-colors"
-                        style={{
-                          background: 'var(--input-background)',
-                          borderColor: 'var(--border)',
-                          color: 'var(--foreground)',
-                        }}
-                        onFocus={(e) => (e.target.style.borderColor = 'var(--primary)')}
-                        onBlur={(e) => (e.target.style.borderColor = 'var(--border)')}
-                      />
+                  <>
+                    <div>
+                      <label className="block text-xs text-[var(--muted-foreground)] mb-1.5">Full name</label>
+                      <div className="relative">
+                        <User
+                          size={14}
+                          className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]"
+                        />
+                        <input
+                          type="text"
+                          value={name}
+                          onChange={(e) => setName(e.target.value)}
+                          placeholder="Alex Rivera"
+                          required
+                          autoComplete="name"
+                          className="w-full pl-9 pr-4 py-2.5 rounded-lg text-sm outline-none border transition-colors"
+                          style={{
+                            background: 'var(--input-background)',
+                            borderColor: 'var(--border)',
+                            color: 'var(--foreground)',
+                          }}
+                          onFocus={(e) => (e.target.style.borderColor = 'var(--primary)')}
+                          onBlur={(e) => (e.target.style.borderColor = 'var(--border)')}
+                        />
+                      </div>
                     </div>
-                  </div>
+
+                    <div>
+                      <label className="block text-xs text-[var(--muted-foreground)] mb-1.5">
+                        GitHub handle <span className="text-[var(--muted-foreground)]">(optional)</span>
+                      </label>
+                      <div className="relative">
+                        <Github
+                          size={14}
+                          className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]"
+                        />
+                        <input
+                          type="text"
+                          value={gitHubHandle}
+                          onChange={(e) => setGitHubHandle(e.target.value)}
+                          placeholder="octocat"
+                          maxLength={39}
+                          autoComplete="username"
+                          autoCapitalize="none"
+                          spellCheck={false}
+                          className="w-full pl-9 pr-4 py-2.5 rounded-lg text-sm outline-none border transition-colors"
+                          style={{
+                            background: 'var(--input-background)',
+                            borderColor: 'var(--border)',
+                            color: 'var(--foreground)',
+                          }}
+                          onFocus={(e) => (e.target.style.borderColor = 'var(--primary)')}
+                          onBlur={(e) => (e.target.style.borderColor = 'var(--border)')}
+                        />
+                      </div>
+                    </div>
+                  </>
                 )}
 
                 <div>

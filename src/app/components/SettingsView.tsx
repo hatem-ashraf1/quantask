@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   Save, AlertTriangle, Trash2, LogOut, Lock, Shield, X,
-  ChevronRight, Users, Building2, Key, Check
+  ChevronRight, Users, Building2, Key, Check, Github
 } from 'lucide-react';
 import { PROJECTS, WORKSPACE, USERS, CURRENT_USER, User } from '../data/store';
 import {
@@ -13,9 +13,11 @@ import {
   leaveWorkspace,
   removeProjectMember,
   transferWorkspaceOwnership,
+  updateProjectMemberRole,
   updateWorkspace,
-  updateWorkspaceMemberRole,
 } from '../api/client';
+import { GitHubIntegrationSection } from './GitHubIntegrationSection';
+import { canManageProjectMembers } from '../utils/permissions';
 
 const ROLE_LABELS: Record<User['role'], string> = {
   owner: 'Owner',
@@ -232,11 +234,10 @@ export function SettingsView({ settingsType = 'workspace', projectId, onWorkspac
   const [projectMembers, setProjectMembers] = useState<User[]>([]);
   const [projectMemberToAdd, setProjectMemberToAdd] = useState('');
   const [projectMemberSaving, setProjectMemberSaving] = useState(false);
+  const [projectRoleSavingUserId, setProjectRoleSavingUserId] = useState('');
   const [projectDeleting, setProjectDeleting] = useState(false);
-  const [roleSavingUserId, setRoleSavingUserId] = useState('');
   const selectedProject = projectId ? PROJECTS.find((item) => item.id === projectId) : undefined;
-  const currentProjectMember = projectMembers.find((member) => member.id === CURRENT_USER.id);
-  const currentUserCanManageProjectMembers = CURRENT_USER.role === 'owner' || CURRENT_USER.role === 'pm' || currentProjectMember?.role === 'pm';
+  const currentUserCanManageProjectMembers = Boolean(projectId && canManageProjectMembers(projectId));
   const addableProjectMembers = USERS.filter(
     (user) => user.role !== 'viewer' && !projectMembers.some((member) => member.id === user.id)
   );
@@ -302,21 +303,6 @@ export function SettingsView({ settingsType = 'workspace', projectId, onWorkspac
     setMembers([...USERS]);
   };
 
-  const changeMemberRole = async (userId: string, role: User['role']) => {
-    setRoleSavingUserId(userId);
-    setNotice('');
-
-    try {
-      await updateWorkspaceMemberRole(WORKSPACE.id, userId, role);
-      setMembers((prev) => prev.map((member) => (member.id === userId ? { ...member, role } : member)));
-      setNotice('Workspace member role updated.');
-    } catch (err) {
-      setNotice(err instanceof Error ? err.message : 'Unable to update member role.');
-    } finally {
-      setRoleSavingUserId('');
-    }
-  };
-
   const addProjectMember = async () => {
     if (!projectId || !projectMemberToAdd) return;
     if (!currentUserCanManageProjectMembers) {
@@ -368,6 +354,22 @@ export function SettingsView({ settingsType = 'workspace', projectId, onWorkspac
     }
   };
 
+  const changeProjectMemberRole = async (userId: string, role: User['role']) => {
+    if (!projectId || !currentUserCanManageProjectMembers) return;
+    setProjectRoleSavingUserId(userId);
+    setNotice('');
+
+    try {
+      const loadedMembers = await updateProjectMemberRole(projectId, userId, role);
+      setProjectMembers([...loadedMembers]);
+      setNotice('Project member role updated.');
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Unable to update the project member role.');
+    } finally {
+      setProjectRoleSavingUserId('');
+    }
+  };
+
   const handleDeleteProject = async () => {
     if (!projectId || !selectedProject) return;
     if (!currentUserCanManageProjectMembers) {
@@ -393,6 +395,10 @@ export function SettingsView({ settingsType = 'workspace', projectId, onWorkspac
   };
 
   const handleSave = async () => {
+    if (!currentUserCanManageWorkspace) {
+      setSaveError('Only the workspace owner can update workspace settings.');
+      return;
+    }
     setSaving(true);
     setSaved(false);
     setSaveError('');
@@ -417,6 +423,7 @@ export function SettingsView({ settingsType = 'workspace', projectId, onWorkspac
   const projectSections = [
     { id: 'general', label: 'General', icon: <Building2 size={13} /> },
     { id: 'members', label: 'Project Members', icon: <Users size={13} /> },
+    { id: 'github', label: 'GitHub Integration', icon: <Github size={13} /> },
     { id: 'danger', label: 'Danger Zone', icon: <AlertTriangle size={13} /> },
   ];
 
@@ -539,13 +546,26 @@ export function SettingsView({ settingsType = 'workspace', projectId, onWorkspac
                     </div>
                   </div>
                   {currentUserCanManageProjectMembers && user.id !== CURRENT_USER.id && user.id !== WORKSPACE.ownerId ? (
-                    <button
-                      disabled={projectMemberSaving}
-                      onClick={() => removeMemberFromProject(user.id)}
-                      className="text-xs text-red-500 hover:underline disabled:opacity-40"
-                    >
-                      Remove
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={user.role}
+                        disabled={projectRoleSavingUserId === user.id || projectMemberSaving}
+                        onChange={(event) => changeProjectMemberRole(user.id, event.target.value as User['role'])}
+                        className="rounded-md border px-2 py-1 text-[10px] outline-none"
+                        style={{ background: 'var(--input-background)', borderColor: 'var(--border)' }}
+                      >
+                        <option value="pm">Project Manager</option>
+                        <option value="developer">Developer</option>
+                        <option value="viewer">Viewer</option>
+                      </select>
+                      <button
+                        disabled={projectMemberSaving || projectRoleSavingUserId === user.id}
+                        onClick={() => removeMemberFromProject(user.id)}
+                        className="text-xs text-red-500 hover:underline disabled:opacity-40"
+                      >
+                        Remove
+                      </button>
+                    </div>
                   ) : (
                     <span className="text-xs text-[var(--muted-foreground)]">
                       {user.id === CURRENT_USER.id ? 'You' : ROLE_LABELS[projectMemberRole(user)]}
@@ -596,6 +616,10 @@ export function SettingsView({ settingsType = 'workspace', projectId, onWorkspac
               </p>
             )}
           </div>
+        )}
+
+        {viewMode === 'project' && activeSection === 'github' && projectId && (
+          <GitHubIntegrationSection projectId={projectId} />
         )}
 
         {viewMode === 'project' && activeSection === 'danger' && (
@@ -679,15 +703,17 @@ export function SettingsView({ settingsType = 'workspace', projectId, onWorkspac
                 </div>
               </div>
 
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs text-white transition-all"
-                style={{ background: saved ? '#22c55e' : 'var(--primary)' }}
-              >
-                {saved ? <Check size={13} /> : <Save size={13} />}
-                {saving ? 'Saving...' : saved ? 'Saved!' : 'Save changes'}
-              </button>
+              {currentUserCanManageWorkspace && (
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs text-white transition-all"
+                  style={{ background: saved ? '#22c55e' : 'var(--primary)' }}
+                >
+                  {saved ? <Check size={13} /> : <Save size={13} />}
+                  {saving ? 'Saving...' : saved ? 'Saved!' : 'Save changes'}
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -836,12 +862,10 @@ export function SettingsView({ settingsType = 'workspace', projectId, onWorkspac
               <p className="text-xs text-[var(--muted-foreground)]">Configure role-based access control for workspace members.</p>
             </div>
             <div className="space-y-2">
-              {['owner', 'pm', 'developer', 'viewer'].map((role) => {
+              {['owner', 'member'].map((role) => {
                 const perms: Record<string, string[]> = {
                   owner: ['Full access', 'Delete workspace', 'Transfer ownership', 'Manage all members'],
-                  pm: ['Manage sprints', 'Approve Done status', 'Create dependencies', 'Add project members'],
-                  developer: ['Execute tasks', 'Self-assign', 'Post comments', 'Toggle sub-tasks'],
-                  viewer: ['Read-only board access', 'View task details'],
+                  member: ['View workspace dashboard', 'View workspace directory', 'Receive project assignments'],
                 };
                 return (
                   <div
@@ -872,7 +896,7 @@ export function SettingsView({ settingsType = 'workspace', projectId, onWorkspac
             <div className="mt-6">
               <h3 className="text-sm text-[var(--foreground)] mb-2">Workspace Members</h3>
               <p className="text-xs text-[var(--muted-foreground)] mb-3">
-                Workspace owners can change member roles. Ownership changes still use transfer ownership.
+                Project Manager, Developer, and Viewer roles are assigned separately inside each project.
               </p>
               <div className="space-y-2">
                 {members.map((member) => {
@@ -896,26 +920,12 @@ export function SettingsView({ settingsType = 'workspace', projectId, onWorkspac
                         </div>
                       </div>
 
-                      {isWorkspaceOwner || !currentUserCanManageWorkspace ? (
-                        <span
-                          className="px-2 py-1 rounded-full text-[10px]"
-                          style={{ background: 'var(--muted)', color: 'var(--muted-foreground)' }}
-                        >
-                          {ROLE_LABELS[member.role]}
-                        </span>
-                      ) : (
-                        <select
-                          value={member.role}
-                          disabled={roleSavingUserId === member.id}
-                          onChange={(event) => changeMemberRole(member.id, event.target.value as User['role'])}
-                          className="px-2 py-1 rounded-lg border text-[10px] outline-none"
-                          style={{ background: 'var(--input-background)', borderColor: 'var(--border)', color: 'var(--foreground)' }}
-                        >
-                          <option value="pm">Project Manager</option>
-                          <option value="developer">Developer</option>
-                          <option value="viewer">Viewer</option>
-                        </select>
-                      )}
+                      <span
+                        className="px-2 py-1 rounded-full text-[10px]"
+                        style={{ background: 'var(--muted)', color: 'var(--muted-foreground)' }}
+                      >
+                        {isWorkspaceOwner ? 'Owner' : 'Member'}
+                      </span>
                     </div>
                   );
                 })}

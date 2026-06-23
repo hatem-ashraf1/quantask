@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { X, Save, Sparkles, Calendar, Flag, User2, ChevronDown } from 'lucide-react';
-import { PROJECTS, USERS, SPRINTS } from '../data/store';
-import { canCreateTaskInProject } from '../utils/permissions';
+import { CURRENT_USER, PROJECTS, USERS, SPRINTS } from '../data/store';
+import { canAssignTask, canCreateTaskInProject, canMoveTaskToSprint, canSelfAssignTask } from '../utils/permissions';
 
 interface TaskCreateFormProps {
   projectId: string;
@@ -30,13 +30,16 @@ export function TaskCreateForm({ projectId, onClose, onCreate }: TaskCreateFormP
   const project = PROJECTS.find((item) => item.id === projectId);
   const projectSprints = SPRINTS.filter((s) => s.projectId === projectId && s.status !== 'completed');
   const canCreateTask = canCreateTaskInProject(projectId);
+  const canAssign = canAssignTask(projectId);
+  const canSelfAssign = canSelfAssignTask(projectId);
+  const canChooseSprint = canMoveTaskToSprint(projectId);
   const assignableUsers = USERS.filter(
     (user) => user.role !== 'viewer' && (!project || project.memberIds.includes(user.id))
   );
 
   const handleCreate = async () => {
     if (!canCreateTask) {
-      setError('Only project managers can create tasks.');
+      setError('You do not have permission to create tasks in this project.');
       return;
     }
     if (!title.trim()) return;
@@ -102,7 +105,7 @@ export function TaskCreateForm({ projectId, onClose, onCreate }: TaskCreateFormP
               className="rounded-lg border px-3 py-2 text-xs"
               style={{ background: '#fffbeb', borderColor: '#fde68a', color: '#92400e' }}
             >
-              Only project managers can create tasks for this project.
+              You do not have permission to create tasks for this project.
             </div>
           )}
 
@@ -192,9 +195,9 @@ export function TaskCreateForm({ projectId, onClose, onCreate }: TaskCreateFormP
                 }}
               >
                 <option value="">Unassigned</option>
-                {assignableUsers.map((user) => (
+                {(canAssign ? assignableUsers : canSelfAssign ? assignableUsers.filter((user) => user.id === CURRENT_USER.id) : []).map((user) => (
                   <option key={user.id} value={user.id}>
-                    {user.name}
+                    {user.id === CURRENT_USER.id && !canAssign ? 'Assign to me' : user.name}
                   </option>
                 ))}
               </select>
@@ -216,6 +219,7 @@ export function TaskCreateForm({ projectId, onClose, onCreate }: TaskCreateFormP
               <select
                 value={sprintId}
                 onChange={(e) => setSprintId(e.target.value)}
+                disabled={!canChooseSprint}
                 className="w-full px-4 py-2.5 rounded-lg border text-sm outline-none"
                 style={{
                   background: 'var(--input-background)',
@@ -224,12 +228,17 @@ export function TaskCreateForm({ projectId, onClose, onCreate }: TaskCreateFormP
                 }}
               >
                 <option value="">Unscheduled (Backlog)</option>
-                {projectSprints.map((sprint) => (
+                {canChooseSprint && projectSprints.map((sprint) => (
                   <option key={sprint.id} value={sprint.id}>
                     {sprint.name} ({sprint.status})
                   </option>
                 ))}
               </select>
+              {!canChooseSprint && (
+                <p className="mt-1.5 text-[10px] text-[var(--muted-foreground)]">
+                  Developers create tasks in the backlog. A project manager can move them into a sprint.
+                </p>
+              )}
             </div>
 
             {/* Due Date */}

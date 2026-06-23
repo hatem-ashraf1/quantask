@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Plus, Folder, Users, Clock, MoreHorizontal, TrendingUp, CheckCircle2, Circle, Zap, ArrowUpRight } from 'lucide-react';
-import { CURRENT_USER, PROJECTS, TASKS, SPRINTS, USERS, WORKSPACE, Project } from '../data/store';
+import { Plus, Folder, Users, Clock, MoreHorizontal, TrendingUp, CheckCircle2, Circle, Zap, ArrowUpRight, LockKeyhole } from 'lucide-react';
+import { PROJECTS, TASKS, SPRINTS, USERS, WORKSPACE, Project } from '../data/store';
 import { createProject } from '../api/client';
+import { canCreateProject, canViewProject } from '../utils/permissions';
 
 interface WorkspaceDashboardProps {
   onProjectSelect: (projectId: string) => void;
@@ -11,6 +12,7 @@ interface WorkspaceDashboardProps {
 const AVATAR_COLORS = ['#5c5cf5', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
 
 function ProjectCard({ project, onClick }: { project: Project; onClick: () => void }) {
+  const isProjectMember = canViewProject(project.id);
   const projectTasks = TASKS.filter((t) => t.projectId === project.id && !t.isDeleted);
   const doneTasks = projectTasks.filter((t) => t.status === 'Done').length;
   const activeSprint = SPRINTS.find((s) => s.projectId === project.id && s.status === 'active');
@@ -79,49 +81,66 @@ function ProjectCard({ project, onClick }: { project: Project; onClick: () => vo
           {project.description}
         </p>
 
-        {/* Progress */}
-        <div className="mb-4">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-xs text-[var(--muted-foreground)]">Progress</span>
-            <span
-              className="text-xs"
-              style={{ color: 'var(--foreground)', fontFamily: 'var(--font-family-mono)' }}
-            >
-              {doneTasks}/{projectTasks.length}
-            </span>
-          </div>
-          <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--muted)' }}>
-            <div
-              className="h-full rounded-full transition-all"
-              style={{ width: `${progress}%`, background: project.color }}
-            />
-          </div>
-        </div>
-
-        {/* Status breakdown mini */}
-        <div className="flex gap-1.5 mb-4">
-          {Object.entries(statusCounts).map(([status, count]) => (
-            <div key={status} className="flex-1 text-center">
-              <div
-                className="rounded-md py-1 mb-0.5 text-xs"
-                style={{
-                  background: 'var(--muted)',
-                  fontFamily: 'var(--font-family-mono)',
-                  color: 'var(--muted-foreground)',
-                }}
-              >
-                {count}
-              </div>
-              <div className="text-[10px] text-[var(--muted-foreground)] truncate">{status}</div>
+        {!isProjectMember ? (
+          <div
+            className="mb-4 rounded-lg border px-3 py-3 flex items-start gap-2.5"
+            style={{ background: 'var(--muted)', borderColor: 'var(--border)' }}
+          >
+            <LockKeyhole size={14} className="text-[var(--muted-foreground)] flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs text-[var(--foreground)]">You are not a member of this project</p>
+              <p className="text-[10px] text-[var(--muted-foreground)] mt-0.5">
+                Tasks, sprints, and project members are hidden.
+              </p>
             </div>
-          ))}
-        </div>
+          </div>
+        ) : (
+          <>
+            {/* Progress */}
+            <div className="mb-4">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs text-[var(--muted-foreground)]">Progress</span>
+                <span
+                  className="text-xs"
+                  style={{ color: 'var(--foreground)', fontFamily: 'var(--font-family-mono)' }}
+                >
+                  {doneTasks}/{projectTasks.length}
+                </span>
+              </div>
+              <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--muted)' }}>
+                <div
+                  className="h-full rounded-full transition-all"
+                  style={{ width: `${progress}%`, background: project.color }}
+                />
+              </div>
+            </div>
+
+            {/* Status breakdown mini */}
+            <div className="flex gap-1.5 mb-4">
+              {Object.entries(statusCounts).map(([status, count]) => (
+                <div key={status} className="flex-1 text-center">
+                  <div
+                    className="rounded-md py-1 mb-0.5 text-xs"
+                    style={{
+                      background: 'var(--muted)',
+                      fontFamily: 'var(--font-family-mono)',
+                      color: 'var(--muted-foreground)',
+                    }}
+                  >
+                    {count}
+                  </div>
+                  <div className="text-[10px] text-[var(--muted-foreground)] truncate">{status}</div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
 
         {/* Footer */}
         <div className="flex items-center justify-between pt-3 border-t" style={{ borderColor: 'var(--border)' }}>
           {/* Members */}
           <div className="flex -space-x-1.5">
-            {members.slice(0, 4).map((u, i) => (
+            {isProjectMember && members.slice(0, 4).map((u, i) => (
               <div
                 key={u.id}
                 className="w-6 h-6 rounded-full border-2 border-white flex items-center justify-center text-white text-[9px]"
@@ -135,7 +154,7 @@ function ProjectCard({ project, onClick }: { project: Project; onClick: () => vo
                 {u.avatar}
               </div>
             ))}
-            {members.length > 4 && (
+            {isProjectMember && members.length > 4 && (
               <div
                 className="w-6 h-6 rounded-full border-2 border-white flex items-center justify-center text-[9px]"
                 style={{ background: 'var(--muted)', color: 'var(--muted-foreground)' }}
@@ -143,10 +162,16 @@ function ProjectCard({ project, onClick }: { project: Project; onClick: () => vo
                 +{members.length - 4}
               </div>
             )}
+            {!isProjectMember && (
+              <span className="text-[10px] text-[var(--muted-foreground)] flex items-center gap-1">
+                <LockKeyhole size={10} />
+                Restricted
+              </span>
+            )}
           </div>
 
           {/* Active sprint */}
-          {activeSprint && (
+          {isProjectMember && activeSprint && (
             <div className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--muted-foreground)' }}>
               <Clock size={10} />
               <span>{activeSprint.name.split('—')[0].trim()}</span>
@@ -206,10 +231,10 @@ export function WorkspaceDashboard({ onProjectSelect, onCreateProject }: Workspa
   const [savingProject, setSavingProject] = useState(false);
   const [createError, setCreateError] = useState('');
   const [, setRefreshKey] = useState(0);
-  const canCreateProject = CURRENT_USER.role === 'owner' || CURRENT_USER.role === 'pm';
+  const canCreateProjects = canCreateProject();
 
   const requestProjectCreate = () => {
-    if (canCreateProject) {
+    if (canCreateProjects) {
       onCreateProject();
       return;
     }
@@ -234,15 +259,16 @@ export function WorkspaceDashboard({ onProjectSelect, onCreateProject }: Workspa
             {WORKSPACE.name || 'Workspace'} · {PROJECTS.length} projects
           </p>
         </div>
-        <button
-          onClick={requestProjectCreate}
-          disabled={!canCreateProject}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm text-white transition-colors hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
-          style={{ background: 'var(--primary)' }}
-        >
-          <Plus size={13} />
-          {canCreateProject ? 'New Project' : 'Project creation restricted'}
-        </button>
+        {canCreateProjects && (
+          <button
+            onClick={requestProjectCreate}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm text-white transition-colors hover:opacity-90"
+            style={{ background: 'var(--primary)' }}
+          >
+            <Plus size={13} />
+            New Project
+          </button>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
@@ -274,7 +300,7 @@ export function WorkspaceDashboard({ onProjectSelect, onCreateProject }: Workspa
 
         {/* Projects grid */}
         {PROJECTS.length === 0 ? (
-          <EmptyState onCreate={requestProjectCreate} canCreateProject={canCreateProject} />
+          <EmptyState onCreate={requestProjectCreate} canCreateProject={canCreateProjects} />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {PROJECTS.map((project) => (

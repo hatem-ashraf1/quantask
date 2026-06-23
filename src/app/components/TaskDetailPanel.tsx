@@ -6,10 +6,18 @@ import {
   MessageSquare, Activity, FileText, Download, Zap, Trash2
 } from 'lucide-react';
 import {
-  Task, TaskStatus, TASKS, USERS, SPRINTS, getUserById, getSprintById, AI_SUGGESTIONS
+  CURRENT_USER, Task, TaskStatus, TASKS, USERS, SPRINTS, getUserById, getSprintById, AI_SUGGESTIONS
 } from '../data/store';
 import { addComment, addDependency, addSubTask, assignTask, deleteTask, fetchTask, toggleSubTask, updateTaskStatus } from '../api/client';
-import { canDeleteTaskInProject } from '../utils/permissions';
+import {
+  canAssignTask,
+  canCommentOnTask,
+  canDeleteTaskInProject,
+  canManageSubtasks,
+  canManageTaskDependencies,
+  canSelfAssignTask,
+  canTransitionTask,
+} from '../utils/permissions';
 
 const PRIORITY_CONFIG = {
   critical: { label: 'Critical', color: '#ef4444' },
@@ -259,6 +267,15 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
   const incompleteSubs = task.subTasks.filter((s) => !s.completed).length;
   const completedSubs = task.subTasks.filter((s) => s.completed).length;
   const canDeleteTask = canDeleteTaskInProject(task.projectId);
+  const canAssign = canAssignTask(task.projectId);
+  const canSelfAssign = canSelfAssignTask(task.projectId);
+  const canManageDependencies = canManageTaskDependencies(task.projectId);
+  const canManageTaskSubtasks = canManageSubtasks(task.projectId);
+  const canComment = canCommentOnTask(task.projectId);
+  const canContribute = canComment || canManageTaskSubtasks;
+  const canChangeStatus =
+    canTransitionTask(task.projectId, 'InProgress') ||
+    canTransitionTask(task.projectId, 'Done');
 
   const replaceTask = (nextTask: Task) => {
     const localTask = TASKS.find((item) => item.id === nextTask.id);
@@ -268,6 +285,14 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
 
   const handleStatusChange = async (newStatus: TaskStatus) => {
     setShowStatusDropdown(false);
+    if (!canTransitionTask(task.projectId, newStatus)) {
+      setPanelError(
+        newStatus === 'Done'
+          ? 'Only the workspace owner or project manager can approve a task as Done.'
+          : 'You do not have permission to change task status.'
+      );
+      return;
+    }
     if (task.isBlocked && (newStatus === 'Review' || newStatus === 'Done')) {
       setPanelError('All task dependencies must be completed before moving this task to Review or Done.');
       return;
@@ -297,6 +322,10 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
   };
 
   const handleSubtaskToggle = async (subId: string) => {
+    if (!canManageTaskSubtasks) {
+      setPanelError('You do not have permission to update sub-tasks.');
+      return;
+    }
     const subtask = task.subTasks.find((item) => item.id === subId);
     if (!subtask) return;
     setPanelError('');
@@ -308,6 +337,11 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
   };
 
   const handleAssign = async (userId: string) => {
+    const assigningSelf = userId === CURRENT_USER.id;
+    if ((!assigningSelf && !canAssign) || (assigningSelf && !canAssign && !canSelfAssign)) {
+      setPanelError('You do not have permission to assign this task.');
+      return;
+    }
     setPanelError('');
     const previous = task;
     setTask((prev) => prev ? { ...prev, assigneeId: userId } : prev);
@@ -320,6 +354,10 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
   };
 
   const handleAddSubtask = async () => {
+    if (!canManageTaskSubtasks) {
+      setPanelError('You do not have permission to add sub-tasks.');
+      return;
+    }
     if (!newSubtaskTitle.trim()) return;
     setPanelError('');
     try {
@@ -332,6 +370,10 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
   };
 
   const handleAddComment = async () => {
+    if (!canComment) {
+      setPanelError('You do not have permission to comment on this task.');
+      return;
+    }
     if (!comment.trim()) return;
     setPanelError('');
     try {
@@ -356,6 +398,10 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
   };
 
   const handleAddDependency = async () => {
+    if (!canManageDependencies) {
+      setPanelError('Only the workspace owner or project manager can manage dependencies.');
+      return;
+    }
     if (!dependencyTaskId) return;
     setPanelError('');
     try {
@@ -428,7 +474,7 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
             {/* Title (editable) */}
             <h2
               className="text-base text-[var(--foreground)] leading-snug"
-              contentEditable
+              contentEditable={canContribute}
               suppressContentEditableWarning
               onBlur={(e) => setTask((prev) => prev ? { ...prev, title: e.currentTarget.textContent || '' } : prev)}
             >
@@ -460,8 +506,9 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
           <div className="relative">
             <button
               onClick={() => {
-                setShowStatusDropdown(!showStatusDropdown);
+                if (canChangeStatus) setShowStatusDropdown(!showStatusDropdown);
               }}
+              disabled={!canChangeStatus}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border transition-colors hover:border-[var(--primary)]"
               style={{
                 background: statusCfg.bg,
@@ -480,7 +527,9 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
                 style={{ background: 'var(--popover)', borderColor: 'var(--border)' }}
               >
                 {(Object.entries(STATUS_CONFIG) as [TaskStatus, typeof STATUS_CONFIG[TaskStatus]][]).map(([s, cfg]) => {
-                  const isDisabled = task.isBlocked && (s === 'Review' || s === 'Done');
+                  const isDisabled =
+                    !canTransitionTask(task.projectId, s) ||
+                    (task.isBlocked && (s === 'Review' || s === 'Done'));
                   return (
                     <button
                       key={s}
@@ -535,12 +584,14 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
                       ({completedSubs}/{task.subTasks.length})
                     </span>
                   </label>
-                  <button
-                    onClick={() => setShowSubtaskInput(true)}
-                    className="flex items-center gap-1 text-xs text-[var(--primary)] hover:underline"
-                  >
-                    <Plus size={11} /> Add
-                  </button>
+                  {canManageTaskSubtasks && (
+                    <button
+                      onClick={() => setShowSubtaskInput(true)}
+                      className="flex items-center gap-1 text-xs text-[var(--primary)] hover:underline"
+                    >
+                      <Plus size={11} /> Add
+                    </button>
+                  )}
                 </div>
                 {showSubtaskInput && (
                   <div className="flex gap-2 mb-2">
@@ -567,6 +618,7 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
                       <button
                         key={st.id}
                         onClick={() => handleSubtaskToggle(st.id)}
+                        disabled={!canManageTaskSubtasks}
                         className="w-full flex items-center gap-2.5 p-2 rounded-lg text-left transition-colors hover:bg-[var(--muted)]"
                       >
                         {st.completed ? (
@@ -607,12 +659,14 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <label className="text-xs text-[var(--muted-foreground)]">Dependencies</label>
-                  <button
-                    onClick={() => setShowDependencyInput(true)}
-                    className="flex items-center gap-1 text-xs text-[var(--primary)] hover:underline"
-                  >
-                    <Plus size={11} /> Add Prerequisite
-                  </button>
+                  {canManageDependencies && (
+                    <button
+                      onClick={() => setShowDependencyInput(true)}
+                      className="flex items-center gap-1 text-xs text-[var(--primary)] hover:underline"
+                    >
+                      <Plus size={11} /> Add Prerequisite
+                    </button>
+                  )}
                 </div>
                 {showDependencyInput && (
                   <div className="flex gap-2 mb-2">
@@ -780,7 +834,7 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
                     </div>
 
                     {/* Comment input */}
-                    <div className="mt-4">
+                    {canComment && <div className="mt-4">
                       <div
                         className="rounded-xl border overflow-hidden"
                         style={{ borderColor: 'var(--border)' }}
@@ -817,7 +871,7 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
                           </button>
                         </div>
                       </div>
-                    </div>
+                    </div>}
                   </div>
                 )}
 
@@ -853,6 +907,7 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
                 <label className="block text-[10px] text-[var(--muted-foreground)] mb-1.5 uppercase tracking-wider">Due Date</label>
                 <input
                   type="date"
+                  disabled={!canContribute}
                   defaultValue={task.dueDate || ''}
                   min={sprint?.startDate}
                   max={sprint?.endDate}
@@ -897,6 +952,7 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
                 </div>
 
                 {AI_SUGGESTIONS.length > 0 && (
+                  canAssign && (
                   <button
                     onClick={() => setShowAI(true)}
                     className="mt-2 w-full flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg text-xs transition-all hover:opacity-90"
@@ -908,6 +964,16 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
                   >
                     <Sparkles size={12} />
                     Ask AI for Best Match
+                  </button>
+                  )
+                )}
+                {!assignee && canSelfAssign && !canAssign && (
+                  <button
+                    onClick={() => handleAssign(CURRENT_USER.id)}
+                    className="mt-2 w-full rounded-lg border px-2.5 py-2 text-xs text-[var(--primary)]"
+                    style={{ borderColor: 'var(--border)' }}
+                  >
+                    Assign to me
                   </button>
                 )}
               </div>
@@ -921,6 +987,7 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
                       <button
                         key={p}
                         onClick={() => setTask((prev) => prev ? { ...prev, priority: p } : prev)}
+                        disabled={!canContribute}
                         className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs transition-colors hover:bg-[var(--muted)]"
                         style={{
                           background: task.priority === p ? 'var(--muted)' : 'transparent',

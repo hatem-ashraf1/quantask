@@ -6,7 +6,7 @@ import {
 import { TASKS, USERS, SPRINTS, getUserById, Task } from '../data/store';
 import { TaskCreateForm } from './TaskCreateForm';
 import { createTask, moveTaskToSprint } from '../api/client';
-import { canCreateTaskInProject } from '../utils/permissions';
+import { canCreateTaskInProject, canMoveTaskToSprint } from '../utils/permissions';
 
 const PRIORITY_CONFIG = {
   critical: { label: 'Critical', color: '#ef4444', bg: '#fef2f2' },
@@ -42,6 +42,7 @@ export function BacklogView({ projectId, onTaskClick }: BacklogViewProps) {
   const [movingTaskId, setMovingTaskId] = useState<string | null>(null);
   const [, setRefreshKey] = useState(0);
   const canCreateTasks = canCreateTaskInProject(projectId);
+  const canMoveTasks = canMoveTaskToSprint(projectId);
 
   const allTasks = TASKS.filter((t) => t.projectId === projectId && !t.isDeleted);
   const backlogTasks = allTasks.filter((t) => !t.sprintId || t.sprintId === null);
@@ -68,7 +69,7 @@ export function BacklogView({ projectId, onTaskClick }: BacklogViewProps) {
 
   const openCreateForm = () => {
     if (!canCreateTasks) {
-      setCreateError('Only project managers can create tasks.');
+      setCreateError('You do not have permission to create tasks in this project.');
       setTimeout(() => setCreateError(''), 5000);
       return;
     }
@@ -76,7 +77,7 @@ export function BacklogView({ projectId, onTaskClick }: BacklogViewProps) {
   };
 
   const handleMoveTaskToSprint = async (task: Task, sprintId: string | null) => {
-    if (!canCreateTasks) {
+    if (!canMoveTasks) {
       setCreateError('Only project managers can move tasks between sprints.');
       setTimeout(() => setCreateError(''), 5000);
       return;
@@ -250,15 +251,17 @@ export function BacklogView({ projectId, onTaskClick }: BacklogViewProps) {
           <span className="text-xs text-[var(--muted-foreground)]" style={{ fontFamily: 'var(--font-family-mono)' }}>
             {displayed.length} tasks
           </span>
-          <button
-            onClick={openCreateForm}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white"
-            style={{ background: 'var(--primary)' }}
-            title={canCreateTasks ? 'Add task' : 'Only project managers can create tasks'}
-          >
-            <Plus size={12} />
-            Add Task
-          </button>
+          {canCreateTasks && (
+            <button
+              onClick={openCreateForm}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white"
+              style={{ background: 'var(--primary)' }}
+              title="Add task"
+            >
+              <Plus size={12} />
+              Add Task
+            </button>
+          )}
         </div>
       </div>
 
@@ -381,7 +384,7 @@ export function BacklogView({ projectId, onTaskClick }: BacklogViewProps) {
                         {task.dueDate || '—'}
                       </span>
 
-                      {canCreateTasks && (
+                      {canMoveTasks && (
                         <select
                           value={task.sprintId || ''}
                           disabled={movingTaskId === task.id}

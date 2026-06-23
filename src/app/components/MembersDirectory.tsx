@@ -1,18 +1,24 @@
 import { useEffect, useState } from 'react';
 import { Users, Plus, Shield, X, Check, Search } from 'lucide-react';
-import { CURRENT_USER, USERS, WORKSPACE, User } from '../data/store';
-import { fetchWorkspaceMembers, inviteWorkspaceMember, updateWorkspaceMemberRole } from '../api/client';
+import { USERS, WORKSPACE, User } from '../data/store';
+import { fetchWorkspaceMembers, inviteWorkspaceMember } from '../api/client';
+import { HasAccess } from '../authorization/HasAccess';
 
 const AVATAR_COLORS: Record<string, string> = {
   u1: '#5c5cf5', u2: '#22c55e', u3: '#f59e0b', u4: '#ef4444', u5: '#8b5cf6', u6: '#06b6d4',
 };
 
-const ROLE_CONFIG = {
-  owner: { label: 'Owner', color: '#5c5cf5', bg: '#ededff' },
-  pm: { label: 'PM', color: '#22c55e', bg: '#f0fdf4' },
-  developer: { label: 'Developer', color: '#3b82f6', bg: '#eff6ff' },
-  viewer: { label: 'Viewer', color: '#6b6b82', bg: '#f6f6fa' },
-};
+const AVATAR_PALETTE = ['#4f46e5', '#047857', '#b45309', '#be123c', '#7e22ce', '#0e7490'];
+
+function avatarColor(userId: string) {
+  if (AVATAR_COLORS[userId]) return AVATAR_COLORS[userId];
+
+  const hash = Array.from(userId).reduce(
+    (value, character) => ((value * 31) + character.charCodeAt(0)) >>> 0,
+    0
+  );
+  return AVATAR_PALETTE[hash % AVATAR_PALETTE.length];
+}
 
 function secondaryMemberLabel(user: User) {
   if (user.email) return user.email;
@@ -112,7 +118,6 @@ export function MembersDirectory() {
   const [members, setMembers] = useState<User[]>([...USERS]);
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [membersError, setMembersError] = useState('');
-  const [updatingRole, setUpdatingRole] = useState('');
 
   const loadMembers = async () => {
     if (!WORKSPACE.id) return;
@@ -141,22 +146,6 @@ export function MembersDirectory() {
       u.email.toLowerCase().includes(search.toLowerCase()) ||
       secondaryMemberLabel(u).toLowerCase().includes(search.toLowerCase())
   );
-  const canManageRoles = CURRENT_USER.role === 'owner' || WORKSPACE.ownerId === CURRENT_USER.id;
-
-  const handleRoleChange = async (userId: string, role: User['role']) => {
-    setMembersError('');
-    setUpdatingRole(userId);
-
-    try {
-      await updateWorkspaceMemberRole(WORKSPACE.id, userId, role);
-      setMembers((prev) => prev.map((member) => (member.id === userId ? { ...member, role } : member)));
-    } catch (err) {
-      setMembersError(err instanceof Error ? err.message : 'Unable to update member role.');
-    } finally {
-      setUpdatingRole('');
-    }
-  };
-
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ fontFamily: 'var(--font-family-body)' }}>
       {/* Header */}
@@ -182,14 +171,16 @@ export function MembersDirectory() {
               style={{ background: 'var(--input-background)', borderColor: 'var(--border)', color: 'var(--foreground)', width: '180px' }}
             />
           </div>
-          <button
-            onClick={() => setShowInvite(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white"
-            style={{ background: 'var(--primary)' }}
-          >
-            <Plus size={12} />
-            Invite Member
-          </button>
+          <HasAccess allowedRoles={['workspace-owner']} targetResource="workspace" resourceId={WORKSPACE.id}>
+            <button
+              onClick={() => setShowInvite(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white"
+              style={{ background: 'var(--primary)' }}
+            >
+              <Plus size={12} />
+              Invite Member
+            </button>
+          </HasAccess>
         </div>
       </div>
 
@@ -222,8 +213,10 @@ export function MembersDirectory() {
 
           {/* Rows */}
           {displayed.map((user, idx) => {
-            const roleCfg = ROLE_CONFIG[user.role] || ROLE_CONFIG.developer;
             const isOwner = user.role === 'owner' || user.id === WORKSPACE.ownerId;
+            const roleCfg = isOwner
+              ? { label: 'Owner', color: '#5c5cf5', bg: '#ededff' }
+              : { label: 'Member', color: '#3b82f6', bg: '#eff6ff' };
 
             return (
               <div
@@ -237,8 +230,8 @@ export function MembersDirectory() {
                 {/* Member */}
                 <div className="flex items-center gap-3">
                   <div
-                    className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs flex-shrink-0"
-                    style={{ background: AVATAR_COLORS[user.id], fontFamily: 'var(--font-family-mono)' }}
+                    className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-medium flex-shrink-0 select-none"
+                    style={{ background: avatarColor(user.id), fontFamily: 'var(--font-family-mono)' }}
                   >
                     {user.avatar}
                   </div>
@@ -280,22 +273,7 @@ export function MembersDirectory() {
                   {isOwner && (
                     <span className="text-[10px] text-[var(--muted-foreground)] italic">Owner</span>
                   )}
-                  {!isOwner && canManageRoles && (
-                    <select
-                      value={user.role}
-                      disabled={updatingRole === user.id}
-                      onChange={(event) => handleRoleChange(user.id, event.target.value as User['role'])}
-                      className="px-2 py-1 rounded-lg border text-[10px] outline-none"
-                      style={{ background: 'var(--input-background)', borderColor: 'var(--border)', color: 'var(--foreground)' }}
-                    >
-                      <option value="pm">PM</option>
-                      <option value="developer">Developer</option>
-                      <option value="viewer">Viewer</option>
-                    </select>
-                  )}
-                  {!isOwner && !canManageRoles && (
-                    <span className="text-[10px] text-[var(--muted-foreground)] italic">View only</span>
-                  )}
+                  {!isOwner && <span className="text-[10px] text-[var(--muted-foreground)] italic">Workspace member</span>}
                 </div>
               </div>
             );

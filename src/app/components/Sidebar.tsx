@@ -1,20 +1,13 @@
 import { useState } from 'react';
 import {
   LayoutGrid, Trello, ListTodo, Users, Settings, Trash2, ChevronDown,
-  Plus, Zap, Circle, CheckCircle2, Clock, FolderKanban, Building2
+  Plus, Zap, Clock, FolderKanban, Building2, FileText
 } from 'lucide-react';
 import { PROJECTS, WORKSPACE, CURRENT_USER } from '../data/store';
-
-type View =
-  | 'dashboard'
-  | 'kanban'
-  | 'backlog'
-  | 'sprints'
-  | 'alltasks'
-  | 'members'
-  | 'settings'
-  | 'trash'
-  | 'auth';
+import { HasAccess } from '../authorization/HasAccess';
+import { useAuthorization } from '../authorization/AuthorizationContext';
+import { AppView as View } from '../authorization/navigation';
+import { canCreateProject } from '../utils/permissions';
 
 interface SidebarProps {
   currentView: View;
@@ -39,7 +32,18 @@ export function Sidebar({ currentView, selectedProjectId, onViewChange, onProjec
   const [workspaceDropdownOpen, setWorkspaceDropdownOpen] = useState(false);
 
   const project = PROJECTS.find((p) => p.id === selectedProjectId);
-  const canCreateProject = CURRENT_USER.role === 'owner' || CURRENT_USER.role === 'pm';
+  const canCreateProjects = canCreateProject();
+  const { rolesFor } = useAuthorization();
+  const scopedRoles = rolesFor('project', selectedProjectId);
+  const displayedRole = scopedRoles.includes('workspace-owner')
+    ? 'owner'
+    : scopedRoles.includes('project-manager')
+      ? 'project manager'
+      : scopedRoles.includes('developer')
+        ? 'developer'
+        : scopedRoles.includes('viewer')
+          ? 'viewer'
+          : 'workspace member';
 
   const navItem = (
     label: string,
@@ -129,6 +133,7 @@ export function Sidebar({ currentView, selectedProjectId, onViewChange, onProjec
         <div className="mb-3">
           {navItem('Dashboard', <LayoutGrid size={14} />, 'dashboard')}
           {navItem('Members', <Users size={14} />, 'members')}
+          {navItem('Reports', <FileText size={14} />, 'reports')}
           {navItem('Trash', <Trash2 size={14} />, 'trash')}
         </div>
 
@@ -147,14 +152,15 @@ export function Sidebar({ currentView, selectedProjectId, onViewChange, onProjec
               />
               <span>Projects</span>
             </button>
-            <button
-              onClick={onCreateProject}
-              disabled={!canCreateProject}
-              title={canCreateProject ? 'Create project' : 'Only workspace owners and PMs can create projects'}
-              className="p-0.5 rounded hover:bg-[var(--sidebar-accent)] text-[var(--sidebar-muted)] hover:text-[var(--sidebar-accent-foreground)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-            >
-              <Plus size={12} />
-            </button>
+            {canCreateProjects && (
+              <button
+                onClick={onCreateProject}
+                title="Create project"
+                className="p-0.5 rounded hover:bg-[var(--sidebar-accent)] text-[var(--sidebar-muted)] hover:text-[var(--sidebar-accent-foreground)] transition-colors"
+              >
+                <Plus size={12} />
+              </button>
+            )}
           </div>
 
           {projectsExpanded && (
@@ -241,17 +247,23 @@ export function Sidebar({ currentView, selectedProjectId, onViewChange, onProjec
               <FolderKanban size={12} />
               <span>All Tasks</span>
             </button>
-            <button
-              onClick={() => onViewChange('settings')}
-              className={`w-full flex items-center gap-2 px-2 py-1 rounded text-sm transition-colors ${
-                currentView === 'settings'
-                  ? 'text-[var(--sidebar-primary)] bg-[var(--sidebar-accent)]'
-                  : 'text-[var(--sidebar-muted)] hover:text-[var(--sidebar-accent-foreground)]'
-              }`}
+            <HasAccess
+              allowedRoles={['workspace-owner', 'project-manager']}
+              targetResource="project"
+              resourceId={project.id}
             >
-              <Settings size={12} />
-              <span>Settings</span>
-            </button>
+              <button
+                onClick={() => onViewChange('settings')}
+                className={`w-full flex items-center gap-2 px-2 py-1 rounded text-sm transition-colors ${
+                  currentView === 'settings'
+                    ? 'text-[var(--sidebar-primary)] bg-[var(--sidebar-accent)]'
+                    : 'text-[var(--sidebar-muted)] hover:text-[var(--sidebar-accent-foreground)]'
+                }`}
+              >
+                <Settings size={12} />
+                <span>Settings</span>
+              </button>
+            </HasAccess>
           </div>
         )}
       </nav>
@@ -274,7 +286,7 @@ export function Sidebar({ currentView, selectedProjectId, onViewChange, onProjec
               {CURRENT_USER.name}
             </p>
             <p className="text-xs leading-tight" style={{ color: 'var(--sidebar-muted)', fontFamily: 'var(--font-family-mono)' }}>
-              {CURRENT_USER.role}
+              {displayedRole}
             </p>
           </div>
           <Zap className="w-3 h-3 flex-shrink-0" style={{ color: '#f59e0b' }} />

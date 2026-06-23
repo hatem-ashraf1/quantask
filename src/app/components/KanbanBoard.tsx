@@ -6,7 +6,7 @@ import {
 import { Task, TaskStatus, TASKS, USERS, getUserById } from '../data/store';
 import { TaskCreateForm } from './TaskCreateForm';
 import { createTask, updateTaskStatus } from '../api/client';
-import { canCreateTaskInProject } from '../utils/permissions';
+import { canCreateTaskInProject, canTransitionTask } from '../utils/permissions';
 
 const COLUMNS: { id: TaskStatus; label: string; color: string; dot: string }[] = [
   { id: 'ToDo', label: 'To Do', color: '#6b6b82', dot: '#d1d1db' },
@@ -64,10 +64,12 @@ function TaskCard({
   task,
   onClick,
   onDragStart,
+  canDrag,
 }: {
   task: Task;
   onClick: () => void;
   onDragStart: (e: React.DragEvent, task: Task) => void;
+  canDrag: boolean;
 }) {
   const assignee = task.assigneeId ? getUserById(task.assigneeId) : null;
   const completedSubs = task.subTasks.filter((s) => s.completed).length;
@@ -76,7 +78,7 @@ function TaskCard({
 
   return (
     <div
-      draggable
+      draggable={canDrag}
       onDragStart={(e) => onDragStart(e, task)}
       onClick={onClick}
       className="group rounded-lg border cursor-pointer transition-all hover:shadow-md hover:border-[var(--primary)]/30 active:opacity-75"
@@ -207,6 +209,16 @@ export function KanbanBoard({ projectId, onTaskClick }: KanbanBoardProps) {
     e.preventDefault();
     const task = dragTaskRef.current;
     if (!task || task.status === targetStatus) return;
+    if (!canTransitionTask(projectId, targetStatus)) {
+      setStatusError(
+        targetStatus === 'Done'
+          ? 'Only the workspace owner or project manager can approve a task as Done.'
+          : 'You do not have permission to change task status.'
+      );
+      setDragOverCol(null);
+      dragTaskRef.current = null;
+      return;
+    }
 
     setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: targetStatus } : t)));
     setStatusError('');
@@ -225,7 +237,7 @@ export function KanbanBoard({ projectId, onTaskClick }: KanbanBoardProps) {
 
   const openCreateForm = () => {
     if (!canCreateTasks) {
-      setStatusError('Only project managers can create tasks.');
+      setStatusError('You do not have permission to create tasks in this project.');
       setTimeout(() => setStatusError(''), 5000);
       return;
     }
@@ -290,13 +302,15 @@ export function KanbanBoard({ projectId, onTaskClick }: KanbanBoardProps) {
                       {colTasks.length}
                     </span>
                   </div>
-                  <button
-                    onClick={openCreateForm}
-                    className="p-0.5 rounded hover:bg-[var(--card)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors disabled:opacity-40"
-                    title={canCreateTasks ? 'Add task' : 'Only project managers can create tasks'}
-                  >
-                    <Plus size={13} />
-                  </button>
+                  {canCreateTasks && (
+                    <button
+                      onClick={openCreateForm}
+                      className="p-0.5 rounded hover:bg-[var(--card)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+                      title="Add task"
+                    >
+                      <Plus size={13} />
+                    </button>
+                  )}
                 </div>
 
                 {/* Cards */}
@@ -307,6 +321,7 @@ export function KanbanBoard({ projectId, onTaskClick }: KanbanBoardProps) {
                       task={task}
                       onClick={() => onTaskClick(task.id)}
                       onDragStart={handleDragStart}
+                      canDrag={canTransitionTask(projectId, task.status)}
                     />
                   ))}
 
@@ -316,13 +331,15 @@ export function KanbanBoard({ projectId, onTaskClick }: KanbanBoardProps) {
                       style={{ borderColor: 'var(--border)' }}
                     >
                       <p className="text-xs text-[var(--muted-foreground)] mb-2">No tasks</p>
-                      <button
-                        onClick={openCreateForm}
-                        className="text-xs text-[var(--primary)] hover:underline flex items-center gap-1"
-                        title={canCreateTasks ? 'Add task' : 'Only project managers can create tasks'}
-                      >
-                        <Plus size={11} /> Add task
-                      </button>
+                      {canCreateTasks && (
+                        <button
+                          onClick={openCreateForm}
+                          className="text-xs text-[var(--primary)] hover:underline flex items-center gap-1"
+                          title="Add task"
+                        >
+                          <Plus size={11} /> Add task
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>

@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import {
   Search, Bell, ChevronDown, CheckCircle2, Clock, AlertTriangle, X,
-  User, LogOut, Settings, Shield, Zap
+  User, LogOut, Settings, Shield
 } from 'lucide-react';
 import { NOTIFICATIONS, CURRENT_USER, Notification } from '../data/store';
+import { useAuthorization } from '../authorization/AuthorizationContext';
 
 interface TopBarProps {
   title: string;
@@ -22,8 +23,8 @@ const NOTIF_ICONS: Record<Notification['type'], React.ReactNode> = {
 
 function formatRelative(timestamp: string) {
   const d = new Date(timestamp);
-  const now = new Date('2024-02-07T12:00:00Z');
-  const diff = Math.floor((now.getTime() - d.getTime()) / 60000);
+  const diff = Math.max(0, Math.floor((Date.now() - d.getTime()) / 60000));
+  if (diff < 1) return 'Just now';
   if (diff < 60) return `${diff}m ago`;
   if (diff < 1440) return `${Math.floor(diff / 60)}h ago`;
   return `${Math.floor(diff / 1440)}d ago`;
@@ -34,6 +35,17 @@ export function TopBar({ title, subtitle, onAuthClick, onNavigate }: TopBarProps
   const [profileOpen, setProfileOpen] = useState(false);
   const [notifications, setNotifications] = useState(NOTIFICATIONS);
   const [searchFocused, setSearchFocused] = useState(false);
+  const { activeProjectId, rolesFor } = useAuthorization();
+  const scopedRoles = rolesFor('project', activeProjectId);
+  const displayedRole = scopedRoles.includes('workspace-owner')
+    ? 'owner'
+    : scopedRoles.includes('project-manager')
+      ? 'project manager'
+      : scopedRoles.includes('developer')
+        ? 'developer'
+        : scopedRoles.includes('viewer')
+          ? 'viewer'
+          : 'workspace member';
 
   const unread = notifications.filter((n) => !n.read).length;
 
@@ -140,30 +152,45 @@ export function TopBar({ title, subtitle, onAuthClick, onNavigate }: TopBarProps
                 </div>
               </div>
               <div className="max-h-80 overflow-y-auto">
-                {notifications.map((n) => (
-                  <div
-                    key={n.id}
-                    onClick={() => markRead(n.id)}
-                    className={`flex items-start gap-3 px-4 py-3 border-b cursor-pointer transition-colors hover:bg-[var(--muted)] ${
-                      !n.read ? 'bg-[var(--accent)]' : ''
-                    }`}
-                    style={{ borderColor: 'var(--border)' }}
-                  >
-                    <span className="mt-0.5 flex-shrink-0">{NOTIF_ICONS[n.type]}</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs text-[var(--foreground)] leading-relaxed">{n.message}</p>
-                      <p
-                        className="text-[10px] mt-0.5"
-                        style={{ color: 'var(--muted-foreground)', fontFamily: 'var(--font-family-mono)' }}
-                      >
-                        {formatRelative(n.timestamp)}
-                      </p>
+                {notifications.length === 0 ? (
+                  <div className="px-6 py-8 text-center">
+                    <div
+                      className="w-10 h-10 rounded-full flex items-center justify-center mx-auto mb-3"
+                      style={{ background: 'var(--muted)' }}
+                    >
+                      <Bell size={18} className="text-[var(--muted-foreground)]" />
                     </div>
-                    {!n.read && (
-                      <span className="w-2 h-2 rounded-full flex-shrink-0 mt-1" style={{ background: 'var(--primary)' }} />
-                    )}
+                    <p className="text-xs text-[var(--foreground)]">No notifications</p>
+                    <p className="text-[10px] text-[var(--muted-foreground)] mt-1">
+                      New assignments and updates will appear here.
+                    </p>
                   </div>
-                ))}
+                ) : (
+                  notifications.map((n) => (
+                    <div
+                      key={n.id}
+                      onClick={() => markRead(n.id)}
+                      className={`flex items-start gap-3 px-4 py-3 border-b cursor-pointer transition-colors hover:bg-[var(--muted)] ${
+                        !n.read ? 'bg-[var(--accent)]' : ''
+                      }`}
+                      style={{ borderColor: 'var(--border)' }}
+                    >
+                      <span className="mt-0.5 flex-shrink-0">{NOTIF_ICONS[n.type]}</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-[var(--foreground)] leading-relaxed">{n.message}</p>
+                        <p
+                          className="text-[10px] mt-0.5"
+                          style={{ color: 'var(--muted-foreground)', fontFamily: 'var(--font-family-mono)' }}
+                        >
+                          {formatRelative(n.timestamp)}
+                        </p>
+                      </div>
+                      {!n.read && (
+                        <span className="w-2 h-2 rounded-full flex-shrink-0 mt-1" style={{ background: 'var(--primary)' }} />
+                      )}
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </>
@@ -199,7 +226,7 @@ export function TopBar({ title, subtitle, onAuthClick, onNavigate }: TopBarProps
                   className="inline-block mt-1 px-1.5 py-0.5 rounded text-[10px] text-white"
                   style={{ background: 'var(--primary)', fontFamily: 'var(--font-family-mono)' }}
                 >
-                  {CURRENT_USER.role}
+                  {displayedRole}
                 </span>
               </div>
               {[

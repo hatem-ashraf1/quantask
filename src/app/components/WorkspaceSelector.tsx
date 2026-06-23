@@ -24,8 +24,9 @@ interface Workspace {
 }
 
 interface WorkspaceSelectorProps {
-  onWorkspaceSelect: (workspaceId: string) => void;
+  onWorkspaceSelect: (workspaceId: string, role?: Workspace['role']) => void;
   onSessionExpired: () => void;
+  initialError?: string;
 }
 
 function toWorkspaceRole(role?: string): Workspace['role'] {
@@ -80,7 +81,7 @@ function filterJoinableInvitations(workspaces: Workspace[], pendingInvitations: 
   return pendingInvitations.filter((invitation) => !invitation.workspaceId || !joinedWorkspaceIds.has(invitation.workspaceId));
 }
 
-export function WorkspaceSelector({ onWorkspaceSelect, onSessionExpired }: WorkspaceSelectorProps) {
+export function WorkspaceSelector({ onWorkspaceSelect, onSessionExpired, initialError = '' }: WorkspaceSelectorProps) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [invitations, setInvitations] = useState<PendingWorkspaceInvitation[]>([]);
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -164,12 +165,12 @@ export function WorkspaceSelector({ onWorkspaceSelect, onSessionExpired }: Works
         });
       }
       const workspaceCards = await refreshWorkspaceHome();
-      if (workspaceId) onWorkspaceSelect(workspaceId);
+      if (workspaceId) onWorkspaceSelect(workspaceId, 'Developer');
       if (!workspaceId) {
         const acceptedWorkspace = workspaceCards.find((workspace) => workspace.name === invitation.workspaceName);
         if (acceptedWorkspace) {
           rememberWorkspaceCard(acceptedWorkspace);
-          onWorkspaceSelect(acceptedWorkspace.id);
+          onWorkspaceSelect(acceptedWorkspace.id, acceptedWorkspace.role);
         }
       }
     } catch (err) {
@@ -185,7 +186,7 @@ export function WorkspaceSelector({ onWorkspaceSelect, onSessionExpired }: Works
 
         if (existingWorkspace) {
           setInvitations((current) => current.filter((item) => item.invitationId !== invitationId));
-          onWorkspaceSelect(existingWorkspace.id);
+          onWorkspaceSelect(existingWorkspace.id, existingWorkspace.role);
           return;
         }
       }
@@ -262,12 +263,12 @@ export function WorkspaceSelector({ onWorkspaceSelect, onSessionExpired }: Works
         </div>
 
         {/* Workspaces grid */}
-        {error && (
+        {(error || initialError) && (
           <div
             className="mb-4 rounded-lg border px-4 py-3 text-sm"
             style={{ background: '#fffbeb', borderColor: '#fde68a', color: '#92400e' }}
           >
-            {error}
+            {error || initialError}
           </div>
         )}
 
@@ -330,7 +331,7 @@ export function WorkspaceSelector({ onWorkspaceSelect, onSessionExpired }: Works
           {workspaces.map((workspace) => (
             <button
               key={workspace.id}
-              onClick={() => onWorkspaceSelect(workspace.id)}
+              onClick={() => onWorkspaceSelect(workspace.id, workspace.role)}
               className="group p-6 rounded-xl border-2 transition-all hover:scale-105 hover:shadow-lg text-left"
               style={{
                 background: 'var(--surface)',
