@@ -9,6 +9,7 @@ import {
   RefreshCw,
   X,
 } from 'lucide-react';
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
   ApiError,
   createWorkspaceReport,
@@ -234,6 +235,15 @@ export function ReportsView() {
     () => reports.filter((report) => report.status === 'Pending' || report.status === 'Processing'),
     [reports]
   );
+  const statusData = useMemo(() => {
+    const statuses: ReportJob['status'][] = ['Pending', 'Processing', 'Completed', 'Failed', 'Expired'];
+    return statuses.map((status) => ({
+      status,
+      count: reports.filter((report) => report.status === status).length,
+    }));
+  }, [reports]);
+  const completedReports = reports.filter((report) => report.status === 'Completed').length;
+  const failedReports = reports.filter((report) => report.status === 'Failed').length;
 
   const loadReports = async (quiet = false) => {
     if (quiet) setRefreshing(true);
@@ -340,6 +350,42 @@ export function ReportsView() {
           <div className="mb-4 flex items-center gap-2 rounded-md border px-3 py-2 text-xs text-red-700" style={{ background: '#fef2f2', borderColor: '#fecaca' }}>
             <AlertCircle size={14} />
             {error}
+          </div>
+        )}
+
+        {!loading && reports.length > 0 && (
+          <div className="mb-6 grid gap-4 lg:grid-cols-[1fr_2fr]">
+            <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
+              {[
+                { label: 'Total reports', value: reports.length, color: 'var(--foreground)' },
+                { label: 'Completed', value: completedReports, color: '#15803d' },
+                { label: 'Needs attention', value: failedReports, color: '#b91c1c' },
+              ].map((item) => (
+                <div key={item.label} className="rounded-md border p-4" style={{ background: 'var(--card)', borderColor: 'var(--border)' }}>
+                  <p className="text-[10px] uppercase tracking-wide text-[var(--muted-foreground)]">{item.label}</p>
+                  <p className="mt-2 text-2xl" style={{ color: item.color }}>{item.value}</p>
+                </div>
+              ))}
+            </div>
+            <div className="rounded-md border p-4" style={{ background: 'var(--card)', borderColor: 'var(--border)' }}>
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm text-[var(--foreground)]">Report Status Overview</h2>
+                  <p className="mt-1 text-xs text-[var(--muted-foreground)]">Track generated reports and failed jobs at a glance.</p>
+                </div>
+              </div>
+              <div className="h-56">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={statusData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                    <XAxis dataKey="status" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} />
+                    <Tooltip />
+                    <Bar dataKey="count" fill="#5c5cf5" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
           </div>
         )}
 

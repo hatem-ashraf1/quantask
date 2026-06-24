@@ -10,7 +10,7 @@ interface TopBarProps {
   title: string;
   subtitle?: string;
   onAuthClick?: () => void;
-  onNavigate?: (view: 'settings' | 'members') => void;
+  onNavigate?: (view: 'settings' | 'members' | 'profile') => void;
 }
 
 const NOTIF_ICONS: Record<Notification['type'], React.ReactNode> = {
@@ -230,15 +230,15 @@ export function TopBar({ title, subtitle, onAuthClick, onNavigate }: TopBarProps
                 </span>
               </div>
               {[
-                { icon: <User size={13} />, label: 'Profile', view: 'members' as const },
-                { icon: <Settings size={13} />, label: 'Preferences', view: 'settings' as const },
+                { icon: <User size={13} />, label: 'Profile', view: 'profile' as const },
+                { icon: <Settings size={13} />, label: 'Preferences', view: 'profile' as const },
                 { icon: <Shield size={13} />, label: 'Security', view: 'settings' as const },
               ].map(({ icon, label }) => (
                 <button
                   key={label}
                   onClick={() => {
                     setProfileOpen(false);
-                    onNavigate?.(label === 'Profile' ? 'members' : 'settings');
+                    onNavigate?.(label === 'Security' ? 'settings' : 'profile');
                   }}
                   className="w-full flex items-center gap-2.5 px-4 py-2 text-xs text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
                 >

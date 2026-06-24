@@ -29,6 +29,7 @@ const AVATAR_COLORS: Record<string, string> = {
 
 export function Sidebar({ currentView, selectedProjectId, onViewChange, onProjectChange, onCreateProject, onSwitchWorkspace }: SidebarProps) {
   const [projectsExpanded, setProjectsExpanded] = useState(true);
+  const [selectedProjectMenuOpen, setSelectedProjectMenuOpen] = useState(true);
   const [workspaceDropdownOpen, setWorkspaceDropdownOpen] = useState(false);
 
   const project = PROJECTS.find((p) => p.id === selectedProjectId);
@@ -171,6 +172,11 @@ export function Sidebar({ currentView, selectedProjectId, onViewChange, onProjec
                   <button
                     key={proj.id}
                     onClick={() => {
+                      if (isSelected) {
+                        setSelectedProjectMenuOpen((open) => !open);
+                        return;
+                      }
+                      setSelectedProjectMenuOpen(true);
                       onProjectChange(proj.id);
                       if (currentView !== 'kanban' && currentView !== 'backlog' && currentView !== 'sprints') {
                         onViewChange('kanban');
@@ -187,6 +193,11 @@ export function Sidebar({ currentView, selectedProjectId, onViewChange, onProjec
                       style={{ background: proj.color, opacity: isSelected ? 1 : 0.7 }}
                     />
                     <span className="flex-1 truncate">{proj.name}</span>
+                    {isSelected && (
+                      <ChevronDown
+                        className={`h-3 w-3 flex-shrink-0 transition-transform ${selectedProjectMenuOpen ? '' : '-rotate-90'}`}
+                      />
+                    )}
                     {proj.status === 'active' && (
                       <span
                         className="w-1.5 h-1.5 rounded-full flex-shrink-0"
@@ -196,12 +207,17 @@ export function Sidebar({ currentView, selectedProjectId, onViewChange, onProjec
                   </button>
                 );
               })}
+              {PROJECTS.length === 0 && (
+                <div className="mx-3 rounded-md border border-dashed px-3 py-2 text-[10px] text-[var(--sidebar-muted)]" style={{ borderColor: 'var(--sidebar-border)' }}>
+                  No projects yet
+                </div>
+              )}
             </div>
           )}
         </div>
 
         {/* Project Sub-nav (visible when a project is selected) */}
-        {project && (
+        {project && selectedProjectMenuOpen && (
           <div className="mt-2 ml-3 border-l pl-3 space-y-0.5" style={{ borderColor: 'var(--sidebar-border)' }}>
             <button
               onClick={() => onViewChange('kanban')}

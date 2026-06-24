@@ -96,6 +96,17 @@ function validateSignup(
   return '';
 }
 
+function authErrorMessage(error: unknown, fallback = 'Request failed. Please try again.') {
+  const message = error instanceof Error ? error.message : fallback;
+  if (message.includes('Unable to reach the backend')) {
+    return 'Cannot reach the backend right now. Please check the deployment URL and try again.';
+  }
+  if (message.toLowerCase().includes('failed to fetch')) {
+    return 'Network request failed. Please check your connection and try again.';
+  }
+  return message || fallback;
+}
+
 export function AuthScreen({
   onAuth,
   mode: initialMode = 'login',
@@ -201,7 +212,7 @@ export function AuthScreen({
         setOtp('');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Authentication request failed.');
+      setError(authErrorMessage(err, 'Authentication request failed.'));
     } finally {
       setLoading(false);
     }
@@ -215,7 +226,7 @@ export function AuthScreen({
       await resendEmailConfirmation(email.trim());
       setNotice('Confirmation email resent.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to resend confirmation email.');
+      setError(authErrorMessage(err, 'Unable to resend confirmation email.'));
     } finally {
       setResending(false);
     }
@@ -318,30 +329,6 @@ export function AuthScreen({
                     Sign in or create an account to continue accepting your workspace invitation.
                   </p>
                 </div>
-              )}
-
-              {mode !== 'join' && mode !== 'confirm' && mode !== 'forgot' && mode !== 'reset' && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setError('GitHub sign-in is not configured for this environment yet.')}
-                    className="w-full flex items-center justify-center gap-2.5 py-2.5 px-4 rounded-lg border text-sm transition-colors hover:bg-[var(--muted)]"
-                    style={{ borderColor: 'var(--border)', color: 'var(--foreground)' }}
-                  >
-                    <Github size={16} />
-                    Continue with GitHub
-                  </button>
-                  <div className="relative my-5">
-                    <div className="absolute inset-0 flex items-center">
-                      <div className="w-full border-t" style={{ borderColor: 'var(--border)' }} />
-                    </div>
-                    <div className="relative flex justify-center">
-                      <span className="px-3 text-xs bg-[var(--background)] text-[var(--muted-foreground)]">
-                        or
-                      </span>
-                    </div>
-                  </div>
-                </>
               )}
 
               <form onSubmit={handleSubmit} className="space-y-4">
@@ -511,7 +498,7 @@ export function AuthScreen({
                           placeholder="Confirm password"
                           required
                           autoComplete="new-password"
-                          className="w-full pl-9 pr-4 py-2.5 rounded-lg text-sm outline-none border transition-colors"
+                          className="w-full pl-9 pr-10 py-2.5 rounded-lg text-sm outline-none border transition-colors"
                           style={{
                             background: 'var(--input-background)',
                             borderColor: 'var(--border)',
@@ -520,6 +507,13 @@ export function AuthScreen({
                           onFocus={(e) => (e.target.style.borderColor = 'var(--primary)')}
                           onBlur={(e) => (e.target.style.borderColor = 'var(--border)')}
                         />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                        >
+                          {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                        </button>
                       </div>
                     </div>
 
@@ -656,7 +650,7 @@ export function AuthScreen({
                           onChange={(e) => setNewPasswordConfirm(e.target.value)}
                           placeholder="Confirm new password"
                           required
-                          className="w-full pl-9 pr-4 py-2.5 rounded-lg text-sm outline-none border transition-colors"
+                          className="w-full pl-9 pr-10 py-2.5 rounded-lg text-sm outline-none border transition-colors"
                           style={{
                             background: 'var(--input-background)',
                             borderColor: 'var(--border)',
@@ -665,6 +659,13 @@ export function AuthScreen({
                           onFocus={(e) => (e.target.style.borderColor = 'var(--primary)')}
                           onBlur={(e) => (e.target.style.borderColor = 'var(--border)')}
                         />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                        >
+                          {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                        </button>
                       </div>
                     </div>
                   </>

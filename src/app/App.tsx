@@ -17,6 +17,7 @@ import { ProjectCreateModal } from './components/ProjectCreateModal';
 import { InvitationAcceptancePage } from './components/InvitationAcceptancePage';
 import { ProjectAccessNotice } from './components/ProjectAccessNotice';
 import { ReportsView } from './components/ReportsView';
+import { ProfileView } from './components/ProfileView';
 import {
   applySelectedWorkspaceRole,
   hasStoredSession,
@@ -53,6 +54,7 @@ const VIEW_TITLES: Record<View, { title: string; subtitle?: string }> = {
   sprints: { title: 'Sprints', subtitle: 'Sprint Planning' },
   alltasks: { title: 'All Tasks', subtitle: 'Complete Project View' },
   members: { title: 'Members' },
+  profile: { title: 'Profile', subtitle: 'Preferences' },
   reports: { title: 'Reports', subtitle: 'Analytics & PDF Exports' },
   settings: { title: 'Settings', subtitle: 'Workspace' },
   trash: { title: 'Trash', subtitle: 'Deleted Items' },
@@ -460,6 +462,7 @@ export default function App() {
                 />
               )}
               {view === 'members' && <MembersDirectory />}
+              {view === 'profile' && <ProfileView />}
               {view === 'reports' && <ReportsView />}
               {view === 'settings' && (
                 <SettingsView

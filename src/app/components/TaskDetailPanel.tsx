@@ -6,9 +6,9 @@ import {
   MessageSquare, Activity, FileText, Download, Zap, Trash2
 } from 'lucide-react';
 import {
-  CURRENT_USER, Task, TaskStatus, TASKS, USERS, SPRINTS, getUserById, getSprintById, AI_SUGGESTIONS
+  CURRENT_USER, PROJECTS, Task, TaskStatus, TASKS, USERS, SPRINTS, getUserById, getSprintById, AI_SUGGESTIONS
 } from '../data/store';
-import { addComment, addDependency, addSubTask, assignTask, deleteTask, fetchTask, toggleSubTask, updateTaskStatus } from '../api/client';
+import { addComment, addDependency, addSubTask, assignTask, deleteTask, fetchTask, getSmartAssignee, toggleSubTask, updateTaskStatus } from '../api/client';
 import {
   canAssignTask,
   canCommentOnTask,
@@ -231,6 +231,7 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
   const [activeTab, setActiveTab] = useState<'activity' | 'details'>('activity');
   const [showAI, setShowAI] = useState(false);
   const [comment, setComment] = useState('');
+  const [commentFiles, setCommentFiles] = useState<File[]>([]);
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [showSubtaskWarning, setShowSubtaskWarning] = useState(false);
   const [pendingStatus, setPendingStatus] = useState<TaskStatus | null>(null);
@@ -240,6 +241,8 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
   const [dependencyTaskId, setDependencyTaskId] = useState('');
   const [panelError, setPanelError] = useState('');
   const [deleting, setDeleting] = useState(false);
+  const [smartAssigning, setSmartAssigning] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!taskId) return;
@@ -276,6 +279,8 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
   const canChangeStatus =
     canTransitionTask(task.projectId, 'InProgress') ||
     canTransitionTask(task.projectId, 'Done');
+  const project = PROJECTS.find((item) => item.id === task.projectId);
+  const assignableUsers = USERS.filter((user) => user.role !== 'viewer' && (!project || project.memberIds.includes(user.id)));
 
   const replaceTask = (nextTask: Task) => {
     const localTask = TASKS.find((item) => item.id === nextTask.id);
@@ -377,7 +382,7 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
     if (!comment.trim()) return;
     setPanelError('');
     try {
-      const created = await addComment(task.id, comment.trim());
+      const created = await addComment(task.id, comment.trim(), commentFiles);
       const newComment = {
         id: created.id || created.Id,
         type: 'comment' as const,
@@ -392,8 +397,46 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
       };
       replaceTask({ ...task, activity: [...task.activity, newComment] });
       setComment('');
+      setCommentFiles([]);
     } catch (err) {
       setPanelError(err instanceof Error ? err.message : 'Unable to add comment.');
+    }
+  };
+
+  const handleCommentFileSelect = (files: FileList | null) => {
+    if (!files) return;
+    const nextFiles = Array.from(files);
+    const oversizedFile = nextFiles.find((file) => file.size > 25 * 1024 * 1024);
+    if (oversizedFile) {
+      setPanelError(`${oversizedFile.name} exceeds the 25MB upload limit.`);
+      return;
+    }
+    setCommentFiles((current) => [...current, ...nextFiles]);
+  };
+
+  const handleSmartAssign = async () => {
+    if (!canAssign) {
+      setPanelError('Only a project manager can use smart assignment.');
+      return;
+    }
+
+    setSmartAssigning(true);
+    setPanelError('');
+
+    try {
+      const suggestion = await getSmartAssignee(task.projectId, {
+        taskTitle: task.title,
+        taskDescription: task.description,
+      });
+      const suggestedUserId = suggestion.assigneeId || suggestion.userId || suggestion.recommendedUserId;
+      if (!suggestedUserId) {
+        throw new Error('Smart assign did not return a recommended user.');
+      }
+      await handleAssign(suggestedUserId);
+    } catch (err) {
+      setPanelError(err instanceof Error ? err.message : 'Unable to smart assign this task.');
+    } finally {
+      setSmartAssigning(false);
     }
   };
 
@@ -852,13 +895,20 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
                           style={{ borderColor: 'var(--border)' }}
                         >
                           <div className="flex items-center gap-1">
+                            <input
+                              ref={fileInputRef}
+                              type="file"
+                              multiple
+                              className="hidden"
+                              onChange={(event) => handleCommentFileSelect(event.target.files)}
+                            />
                             <button
-                              onClick={() => setPanelError('File upload is not connected in this build yet.')}
+                              onClick={() => fileInputRef.current?.click()}
                               className="p-1.5 rounded hover:bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
                             >
                               <Paperclip size={13} />
                             </button>
-                            <span className="text-[10px] text-[var(--muted-foreground)]">Max 5MB</span>
+                            <span className="text-[10px] text-[var(--muted-foreground)]">Max 25MB</span>
                           </div>
                           <button
                             onClick={handleAddComment}
@@ -870,6 +920,25 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
                             Comment
                           </button>
                         </div>
+                        {commentFiles.length > 0 && (
+                          <div className="border-t px-3 py-2" style={{ borderColor: 'var(--border)' }}>
+                            <div className="flex flex-wrap gap-2">
+                              {commentFiles.map((file, index) => (
+                                <span key={`${file.name}-${index}`} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px]" style={{ background: 'var(--muted)', color: 'var(--muted-foreground)' }}>
+                                  <Paperclip size={10} />
+                                  {file.name}
+                                  <button
+                                    type="button"
+                                    onClick={() => setCommentFiles((current) => current.filter((_, fileIndex) => fileIndex !== index))}
+                                    className="text-[var(--foreground)]"
+                                  >
+                                    <X size={10} />
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>}
                   </div>
@@ -950,11 +1019,26 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
                     </>
                   )}
                 </div>
+                {canAssign && (
+                  <select
+                    value={task.assigneeId || ''}
+                    onChange={(event) => handleAssign(event.target.value)}
+                    className="mt-2 w-full rounded-lg border px-2.5 py-2 text-xs outline-none"
+                    style={{ borderColor: 'var(--border)', color: 'var(--foreground)', background: 'var(--input-background)' }}
+                  >
+                    <option value="">Unassigned</option>
+                    {assignableUsers.map((user) => (
+                      <option key={user.id} value={user.id}>
+                        {user.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
 
-                {AI_SUGGESTIONS.length > 0 && (
-                  canAssign && (
+                {canAssign && (
                   <button
-                    onClick={() => setShowAI(true)}
+                    onClick={handleSmartAssign}
+                    disabled={smartAssigning}
                     className="mt-2 w-full flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg text-xs transition-all hover:opacity-90"
                     style={{
                       background: 'var(--ai-bg)',
@@ -962,10 +1046,9 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
                       border: '1px solid var(--ai-secondary)',
                     }}
                   >
-                    <Sparkles size={12} />
-                    Ask AI for Best Match
+                    {smartAssigning ? <RotateCcw size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                    {smartAssigning ? 'Asking AI...' : 'Smart assign'}
                   </button>
-                  )
                 )}
                 {!assignee && canSelfAssign && !canAssign && (
                   <button

@@ -9,6 +9,7 @@ export type AppView =
   | 'sprints'
   | 'alltasks'
   | 'members'
+  | 'profile'
   | 'reports'
   | 'settings'
   | 'trash';
@@ -67,6 +68,7 @@ export function guardNavigation(view: AppView, projectId?: string): NavigationDe
 export function appPath(view: AppView, projectId?: string) {
   if (view === 'dashboard') return withAppBasePath('/dashboard');
   if (view === 'members') return withAppBasePath('/members');
+  if (view === 'profile') return withAppBasePath('/profile');
   if (view === 'reports') return withAppBasePath('/reports');
   if (view === 'trash') return withAppBasePath('/trash');
   if (PROJECT_VIEWS.includes(view) && projectId) return withAppBasePath(`/projects/${projectId}/${view}`);
@@ -81,6 +83,7 @@ export function parseAppPath(pathname: string) {
   }
   if (normalized === '/dashboard') return { projectId: '', view: 'dashboard' as AppView };
   if (normalized === '/members') return { projectId: '', view: 'members' as AppView };
+  if (normalized === '/profile') return { projectId: '', view: 'profile' as AppView };
   if (normalized === '/reports') return { projectId: '', view: 'reports' as AppView };
   if (normalized === '/trash') return { projectId: '', view: 'trash' as AppView };
   return null;

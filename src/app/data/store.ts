@@ -9,6 +9,8 @@ export interface User {
   githubHandle: string;
   skills: string[];
   joinedDate: string;
+  bio?: string;
+  profilePictureUrl?: string;
 }
 
 export type TaskStatus = 'ToDo' | 'InProgress' | 'Review' | 'Done';
@@ -135,6 +137,8 @@ export const CURRENT_USER: User = {
   githubHandle: '',
   skills: [],
   joinedDate: '',
+  bio: '',
+  profilePictureUrl: '',
 };
 
 export const getUserById = (id: string) => USERS.find((u) => u.id === id);

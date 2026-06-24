@@ -84,6 +84,7 @@ type ApiUser = {
   name?: string;
   Name?: string;
   bio?: string;
+  Bio?: string;
   profilePictureUrl?: string;
   ProfilePictureUrl?: string;
   role?: string;
@@ -471,6 +472,10 @@ function getApiErrorMessage(payload: unknown, fallback: string) {
     return fallback;
   }
 
+  if (message === 'EMAIL_NOT_CONFIRMED') return 'Please confirm your email before signing in.';
+  if (message === 'INVALID_CREDENTIALS') return 'The email or password is incorrect.';
+  if (message === 'EMAIL_ALREADY_EXISTS') return 'An account with this email already exists.';
+  if (message.includes('Failed to fetch')) return 'Network request failed. Please check your connection and try again.';
   return message;
 }
 
@@ -798,6 +803,8 @@ function mapUser(user: ApiUser | ApiProjectMember): User {
     githubHandle: raw.githubHandle || username || '',
     skills: raw.skills || [],
     joinedDate: dateOnly(raw.joinedDate || raw.joinedAt || raw.JoinedAt || raw.createdAt || raw.CreatedAt) || '',
+    bio: raw.bio || raw.Bio || '',
+    profilePictureUrl: raw.profilePictureUrl || raw.ProfilePictureUrl || '',
   };
 }
 
@@ -853,6 +860,8 @@ function mergeUserDetails(existing: User, incoming: User) {
     githubHandle: incoming.githubHandle?.startsWith('id:') && existing.githubHandle ? existing.githubHandle : incoming.githubHandle || existing.githubHandle,
     skills: incoming.skills.length > 0 ? incoming.skills : existing.skills,
     joinedDate: incoming.joinedDate || existing.joinedDate,
+    bio: incoming.bio ?? existing.bio,
+    profilePictureUrl: incoming.profilePictureUrl || existing.profilePictureUrl,
     role: existing.role === 'owner' || incoming.role === 'owner' ? 'owner' : incoming.role || existing.role,
   };
 }
@@ -1310,6 +1319,57 @@ export async function logoutFromBackend() {
   }
 }
 
+export async function fetchMyProfile() {
+  const profile = await request<ApiUser>('/api/users/profile');
+  Object.assign(CURRENT_USER, {
+    ...CURRENT_USER,
+    ...mapUser(profile),
+    role: CURRENT_USER.role,
+  });
+  upsertUsers([CURRENT_USER]);
+  persistCurrentUserSession();
+  return CURRENT_USER;
+}
+
+export async function updateMyProfile(input: { fullName: string; bio?: string }) {
+  const profile = await request<ApiUser>('/api/users/profile', {
+    method: 'PATCH',
+    body: JSON.stringify({
+      fullName: input.fullName,
+      bio: input.bio || '',
+    }),
+  });
+  Object.assign(CURRENT_USER, {
+    ...CURRENT_USER,
+    ...mapUser(profile),
+    role: CURRENT_USER.role,
+  });
+  upsertUsers([CURRENT_USER]);
+  persistCurrentUserSession();
+  return CURRENT_USER;
+}
+
+export async function uploadMyProfilePicture(file: File) {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await request<{ profilePictureUrl?: string; ProfilePictureUrl?: string; url?: string; Url?: string }>(
+    '/api/users/profile/picture',
+    {
+      method: 'POST',
+      body: formData,
+      headers: {},
+    }
+  );
+  const profilePictureUrl = response.profilePictureUrl || response.ProfilePictureUrl || response.url || response.Url || '';
+  if (profilePictureUrl) {
+    CURRENT_USER.profilePictureUrl = profilePictureUrl;
+    upsertUsers([CURRENT_USER]);
+    persistCurrentUserSession();
+  }
+  return profilePictureUrl;
+}
+
 export async function forgotPassword(email: string) {
   return request('/api/auth/forgot-password', {
     method: 'POST',
@@ -1749,6 +1809,25 @@ export async function assignTask(taskId: string, assigneeId: string | null) {
   return fetchTask(taskId);
 }
 
+export async function getSmartAssignee(projectId: string, input: { taskTitle: string; taskDescription?: string }) {
+  return request<{
+    assigneeId?: string;
+    userId?: string;
+    recommendedUserId?: string;
+    matchScore?: number;
+    score?: number;
+    confidence?: string;
+    reason?: string;
+    matchReason?: string;
+  }>(`/api/tasks/projects/${projectId}/smart-assignee`, {
+    method: 'POST',
+    body: JSON.stringify({
+      taskTitle: input.taskTitle,
+      taskDescription: input.taskDescription || '',
+    }),
+  });
+}
+
 export async function restoreTask(taskId: string) {
   await request(`/api/tasks/${taskId}/restore`, { method: 'POST' });
   const task = TASKS.find((item) => item.id === taskId);
@@ -1820,10 +1899,13 @@ export async function moveTaskToSprint(taskId: string, sprintId: string | null) 
   return fetchTask(taskId, localTask?.projectId, sprintId);
 }
 
-export async function addComment(taskId: string, body: string) {
+export async function addComment(taskId: string, body: string, files: File[] = []) {
   const formData = new FormData();
   formData.append('taskId', taskId);
   formData.append('body', body);
+  files.forEach((file, index) => {
+    formData.append(`attachments[${index}].file`, file);
+  });
 
   const comment = await request<ApiComment>('/api/comments', {
     method: 'POST',

@@ -525,6 +525,11 @@ export function SettingsView({ settingsType = 'workspace', projectId, onWorkspac
                   ? 'Add workspace members to this project before assigning tasks to them.'
                   : 'Project members are managed by project managers.'}
               </p>
+              {projectMembers.some((user) => user.id === CURRENT_USER.id) && (
+                <p className="mt-2 rounded-lg border px-3 py-2 text-xs" style={{ background: 'var(--secondary)', borderColor: 'var(--border)', color: 'var(--foreground)' }}>
+                  Your project role is <strong>{ROLE_LABELS[projectMemberRole(projectMembers.find((user) => user.id === CURRENT_USER.id) || CURRENT_USER)]}</strong>.
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               {projectMembers.map((user) => (
@@ -568,7 +573,7 @@ export function SettingsView({ settingsType = 'workspace', projectId, onWorkspac
                     </div>
                   ) : (
                     <span className="text-xs text-[var(--muted-foreground)]">
-                      {user.id === CURRENT_USER.id ? 'You' : ROLE_LABELS[projectMemberRole(user)]}
+                      {user.id === CURRENT_USER.id ? `You - ${ROLE_LABELS[projectMemberRole(user)]}` : ROLE_LABELS[projectMemberRole(user)]}
                     </span>
                   )}
                 </div>

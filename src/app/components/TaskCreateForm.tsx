@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X, Save, Sparkles, Calendar, Flag, User2, ChevronDown } from 'lucide-react';
 import { CURRENT_USER, PROJECTS, USERS, SPRINTS } from '../data/store';
+import { getSmartAssignee } from '../api/client';
 import { canAssignTask, canCreateTaskInProject, canMoveTaskToSprint, canSelfAssignTask } from '../utils/permissions';
 
 interface TaskCreateFormProps {
@@ -25,6 +26,7 @@ export function TaskCreateForm({ projectId, onClose, onCreate }: TaskCreateFormP
   const [dueDate, setDueDate] = useState('');
   const [storyPoints, setStoryPoints] = useState('');
   const [saving, setSaving] = useState(false);
+  const [smartAssigning, setSmartAssigning] = useState(false);
   const [error, setError] = useState('');
 
   const project = PROJECTS.find((item) => item.id === projectId);
@@ -64,6 +66,34 @@ export function TaskCreateForm({ projectId, onClose, onCreate }: TaskCreateFormP
       setError(err instanceof Error ? err.message : 'Unable to create task.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSmartAssign = async () => {
+    if (!canAssign) {
+      setError('Only a project manager can use smart assignment.');
+      return;
+    }
+    if (!title.trim()) {
+      setError('Enter a task title before using smart assignment.');
+      return;
+    }
+
+    setSmartAssigning(true);
+    setError('');
+
+    try {
+      const suggestion = await getSmartAssignee(projectId, {
+        taskTitle: title.trim(),
+        taskDescription: description.trim(),
+      });
+      const suggestedUserId = suggestion.assigneeId || suggestion.userId || suggestion.recommendedUserId;
+      if (!suggestedUserId) throw new Error('Smart assign did not return a recommended user.');
+      setAssigneeId(suggestedUserId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to smart assign this task.');
+    } finally {
+      setSmartAssigning(false);
     }
   };
 
@@ -302,9 +332,18 @@ export function TaskCreateForm({ projectId, onClose, onCreate }: TaskCreateFormP
                   AI Assignment Available
                 </p>
                 <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
-                  After creating this task, you can use AI to recommend the best assignee based on team activity.
+                  Recommend the best assignee from this task title and description.
                 </p>
               </div>
+              <button
+                type="button"
+                onClick={handleSmartAssign}
+                disabled={!canAssign || smartAssigning || !title.trim()}
+                className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs text-white disabled:opacity-50"
+                style={{ background: 'var(--primary)' }}
+              >
+                {smartAssigning ? 'Finding...' : 'Smart assign'}
+              </button>
             </div>
           </div>
         </div>
