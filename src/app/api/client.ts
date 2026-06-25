@@ -90,6 +90,8 @@ type ApiUser = {
   role?: string;
   Role?: string;
   githubHandle?: string;
+  gitHubHandle?: string;
+  GitHubHandle?: string;
   skills?: string[];
   createdAt?: string;
   CreatedAt?: string;
@@ -247,6 +249,7 @@ export type ReportJob = {
   createdAt: string;
   completedAt?: string;
   expiresAt?: string;
+  workspaceId?: string;
 };
 
 type ApiProject = {
@@ -345,6 +348,43 @@ type CreateTaskInput = {
   storyPoints?: number | null;
 };
 
+type UpdateTaskInput = {
+  title: string;
+  description?: string;
+  priority?: TaskPriority;
+  dueDate?: string | null;
+};
+
+type ApiSmartAssigneeRecommendation = {
+  developerKey?: string;
+  DeveloperKey?: string;
+  developerId?: string;
+  DeveloperId?: string;
+  name?: string;
+  Name?: string;
+  email?: string;
+  Email?: string;
+  score?: number;
+  Score?: number;
+  rank?: number;
+  Rank?: number;
+};
+
+type ApiSmartAssigneeResponse = {
+  taskTitle?: string;
+  TaskTitle?: string;
+  recommendations?: ApiSmartAssigneeRecommendation[];
+  Recommendations?: ApiSmartAssigneeRecommendation[];
+  assigneeId?: string;
+  userId?: string;
+  recommendedUserId?: string;
+  matchScore?: number;
+  score?: number;
+  confidence?: string;
+  reason?: string;
+  matchReason?: string;
+};
+
 type CreateSprintInput = {
   projectId: string;
   name: string;
@@ -355,6 +395,12 @@ type CreateSprintInput = {
 
 type CreateProjectInput = {
   workspaceId: string;
+  name: string;
+  description?: string;
+  key?: string;
+};
+
+type UpdateProjectInput = {
   name: string;
   description?: string;
   key?: string;
@@ -395,6 +441,7 @@ const STORAGE_KEYS = {
   currentUser: 'quantask_current_user',
   workspaceOwners: 'quantask_workspace_owners',
   joinedWorkspaces: 'quantask_joined_workspaces',
+  reportWorkspaces: 'quantask_report_workspaces',
 };
 
 const DEFAULT_API_BASE_URL = 'http://quantask.runasp.net';
@@ -800,7 +847,7 @@ function mapUser(user: ApiUser | ApiProjectMember): User {
     email,
     avatar: initials(name),
     role: normalizeRole(raw.role ?? raw.Role),
-    githubHandle: raw.githubHandle || username || '',
+    githubHandle: raw.githubHandle || raw.gitHubHandle || raw.GitHubHandle || username || '',
     skills: raw.skills || [],
     joinedDate: dateOnly(raw.joinedDate || raw.joinedAt || raw.JoinedAt || raw.createdAt || raw.CreatedAt) || '',
     bio: raw.bio || raw.Bio || '',
@@ -1331,17 +1378,22 @@ export async function fetchMyProfile() {
   return CURRENT_USER;
 }
 
-export async function updateMyProfile(input: { fullName: string; bio?: string }) {
+export async function updateMyProfile(input: { fullName: string; bio?: string; githubHandle?: string }) {
   const profile = await request<ApiUser>('/api/users/profile', {
     method: 'PATCH',
     body: JSON.stringify({
       fullName: input.fullName,
       bio: input.bio || '',
+      githubHandle: input.githubHandle?.trim() || null,
     }),
   });
+  const mappedProfile = mapUser(profile);
+  if (!mappedProfile.githubHandle && input.githubHandle) {
+    mappedProfile.githubHandle = input.githubHandle.trim();
+  }
   Object.assign(CURRENT_USER, {
     ...CURRENT_USER,
-    ...mapUser(profile),
+    ...mappedProfile,
     role: CURRENT_USER.role,
   });
   upsertUsers([CURRENT_USER]);
@@ -1448,11 +1500,15 @@ export async function createWorkspace(name: string, description: string) {
 }
 
 export async function updateWorkspace(workspaceId: string, name: string, description?: string) {
-  const updated = await request<ApiWorkspace>(`/api/workspaces/${workspaceId}`, {
+  await request(`/api/workspaces/${workspaceId}`, {
     method: 'PUT',
     body: JSON.stringify({ name, description: description || null, members: null }),
   });
-  Object.assign(WORKSPACE, mapWorkspace(updated));
+  Object.assign(WORKSPACE, mapWorkspace({
+    id: workspaceId,
+    name: name.trim() || WORKSPACE.name,
+    ownerId: WORKSPACE.ownerId,
+  }));
   return WORKSPACE;
 }
 
@@ -1494,6 +1550,47 @@ export async function createProject(input: CreateProjectInput) {
   const project = mapProject(created);
   upsertWorkspaceProject(project);
   setProjectAuthorizationRole(project.id, 'project-manager');
+  return project;
+}
+
+export async function updateProject(projectId: string, input: UpdateProjectInput) {
+  const localProject = PROJECTS.find((project) => project.id === projectId);
+  const updated = await request<ApiProject | undefined>(`/api/projects/${projectId}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      name: input.name,
+      description: input.description || null,
+      key: input.key || null,
+    }),
+  }).catch(async (error) => {
+    if (error instanceof ApiError && (error.status === 404 || error.status === 405)) {
+      return request<ApiProject | undefined>(`/api/projects/${projectId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          name: input.name,
+          description: input.description || null,
+          key: input.key || null,
+        }),
+      });
+    }
+    throw error;
+  });
+
+  const project = updated?.id ? mapProject(updated) : {
+    ...(localProject || {
+      id: projectId,
+      color: '#5c5cf5',
+      memberIds: [],
+      sprintIds: [],
+      createdAt: '',
+      status: 'active' as const,
+    }),
+    name: input.name,
+    description: input.description || '',
+    key: input.key || localProject?.key || initials(input.name).slice(0, 5),
+  };
+
+  upsertWorkspaceProject(project);
   return project;
 }
 
@@ -1794,6 +1891,57 @@ export async function fetchTask(taskId: string, fallbackProjectId?: string, fall
   return task;
 }
 
+export async function updateTaskDetails(taskId: string, input: UpdateTaskInput) {
+  const localTask = TASKS.find((task) => task.id === taskId);
+  const latestTask = await request<ApiTask>(`/api/tasks/${taskId}`).catch(() => undefined);
+  const latest = latestTask ? mapTask(latestTask, localTask?.projectId, localTask?.sprintId) : undefined;
+  const rowVersion = latest?.rowVersion || localTask?.rowVersion;
+
+  if (latest && localTask) {
+    Object.assign(localTask, latest);
+  }
+
+  const body = JSON.stringify({
+    title: input.title,
+    description: input.description || null,
+    priority: toApiPriority(input.priority),
+    dueDate: toApiDateTime(input.dueDate),
+    rowVersion,
+  });
+
+  const updated = await request<ApiTask | undefined>(`/api/tasks/${taskId}`, {
+    method: 'PUT',
+    body,
+  }).catch(async (error) => {
+    if (error instanceof ApiError && (error.status === 404 || error.status === 405)) {
+      return request<ApiTask | undefined>(`/api/tasks/${taskId}`, {
+        method: 'PATCH',
+        body,
+      });
+    }
+    throw error;
+  });
+
+  if (updated?.id || updated?.taskId) {
+    const task = mapTask(updated, localTask?.projectId, localTask?.sprintId);
+    upsertTasks([task]);
+    return task;
+  }
+
+  if (localTask) {
+    Object.assign(localTask, {
+      title: input.title,
+      description: input.description || '',
+      priority: input.priority || localTask.priority,
+      dueDate: input.dueDate || null,
+      updatedAt: new Date().toISOString(),
+    });
+    return localTask;
+  }
+
+  return fetchTask(taskId);
+}
+
 export async function fetchDeletedTasks(workspaceId: string) {
   const tasks = await request<ApiTask[]>(`/api/tasks/deleted?workspaceId=${encodeURIComponent(workspaceId)}`);
   const deletedTasks = tasks.map(mapDeletedTask);
@@ -1802,6 +1950,10 @@ export async function fetchDeletedTasks(workspaceId: string) {
 }
 
 export async function assignTask(taskId: string, assigneeId: string | null) {
+  if (!assigneeId) {
+    throw new Error('The backend does not support unassigning an existing task yet.');
+  }
+
   await request(`/api/tasks/${taskId}/assign`, {
     method: 'POST',
     body: JSON.stringify({ assigneeId }),
@@ -1810,22 +1962,40 @@ export async function assignTask(taskId: string, assigneeId: string | null) {
 }
 
 export async function getSmartAssignee(projectId: string, input: { taskTitle: string; taskDescription?: string }) {
-  return request<{
-    assigneeId?: string;
-    userId?: string;
-    recommendedUserId?: string;
-    matchScore?: number;
-    score?: number;
-    confidence?: string;
-    reason?: string;
-    matchReason?: string;
-  }>(`/api/tasks/projects/${projectId}/smart-assignee`, {
+  const response = await request<ApiSmartAssigneeResponse>(`/api/tasks/projects/${projectId}/smart-assignee`, {
     method: 'POST',
     body: JSON.stringify({
       taskTitle: input.taskTitle,
       taskDescription: input.taskDescription || '',
     }),
   });
+
+  const recommendations = (response.recommendations || response.Recommendations || []).map((recommendation) => ({
+    developerKey: recommendation.developerKey || recommendation.DeveloperKey || '',
+    developerId: recommendation.developerId || recommendation.DeveloperId || '',
+    name: recommendation.name || recommendation.Name || '',
+    email: recommendation.email || recommendation.Email || '',
+    score: recommendation.score ?? recommendation.Score ?? 0,
+    rank: recommendation.rank ?? recommendation.Rank ?? 0,
+  }));
+  const bestRecommendation = recommendations[0];
+  const recommendedUserId =
+    response.assigneeId ||
+    response.userId ||
+    response.recommendedUserId ||
+    bestRecommendation?.developerId ||
+    '';
+
+  return {
+    ...response,
+    taskTitle: response.taskTitle || response.TaskTitle || input.taskTitle,
+    recommendations,
+    assigneeId: recommendedUserId || undefined,
+    userId: recommendedUserId || undefined,
+    recommendedUserId: recommendedUserId || undefined,
+    matchScore: response.matchScore ?? response.score ?? bestRecommendation?.score,
+    score: response.score ?? response.matchScore ?? bestRecommendation?.score,
+  };
 }
 
 export async function restoreTask(taskId: string) {
@@ -1965,8 +2135,36 @@ export async function syncGitHubAnalytics(projectId: string) {
   });
 }
 
+function readReportWorkspaceCache() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEYS.reportWorkspaces) || '{}') as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+function rememberReportWorkspace(jobId: string | undefined, workspaceId: string) {
+  if (!jobId || !workspaceId) return;
+  const cache = readReportWorkspaceCache();
+  cache[jobId] = workspaceId;
+  localStorage.setItem(STORAGE_KEYS.reportWorkspaces, JSON.stringify(cache));
+}
+
+function reportNameMatchesWorkspace(reportName: string, workspaceName: string) {
+  const normalizedReportName = reportName.trim().toLowerCase();
+  const normalizedWorkspaceName = workspaceName.trim().toLowerCase();
+  return Boolean(normalizedWorkspaceName && normalizedReportName.startsWith(`${normalizedWorkspaceName} report`));
+}
+
+function withCachedReportWorkspace(report: ReportJob): ReportJob {
+  return {
+    ...report,
+    workspaceId: report.workspaceId || readReportWorkspaceCache()[report.jobId],
+  };
+}
+
 export async function createWorkspaceReport(workspaceId: string, input: CreateReportRequest) {
-  return request<ReportJob>(`/api/workspaces/${workspaceId}/reports`, {
+  const report = await request<ReportJob>(`/api/workspaces/${workspaceId}/reports`, {
     method: 'POST',
     body: JSON.stringify({
       projectId: input.projectId || null,
@@ -1975,14 +2173,25 @@ export async function createWorkspaceReport(workspaceId: string, input: CreateRe
       includeGitHub: input.includeGitHub,
     }),
   });
+  rememberReportWorkspace(report.jobId, workspaceId);
+  return { ...report, workspaceId };
 }
 
 export async function getReportStatus(jobId: string) {
-  return request<ReportJob>(`/api/reports/${jobId}/status`);
+  return withCachedReportWorkspace(await request<ReportJob>(`/api/reports/${jobId}/status`));
 }
 
 export async function getMyReports() {
-  return request<ReportJob[]>('/api/reports/my');
+  const reports = await request<ReportJob[]>('/api/reports/my');
+  return reports.map(withCachedReportWorkspace);
+}
+
+export async function getWorkspaceReports(workspaceId: string, workspaceName: string) {
+  const reports = await getMyReports();
+  return reports.filter((report) => {
+    if (report.workspaceId) return report.workspaceId === workspaceId;
+    return reportNameMatchesWorkspace(report.reportName, workspaceName);
+  });
 }
 
 function reportFileName(contentDisposition: string | null, fallback: string) {

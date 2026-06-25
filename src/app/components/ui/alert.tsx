@@ -1,3 +1,4 @@
+// Reusable UI primitive for Alert; product screens import this instead of rebuilding the pattern.
 import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
 

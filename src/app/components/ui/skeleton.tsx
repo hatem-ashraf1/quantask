@@ -1,3 +1,4 @@
+// Reusable UI primitive for Skeleton; product screens import this instead of rebuilding the pattern.
 import { cn } from "./utils";
 
 function Skeleton({ className, ...props }: React.ComponentProps<"div">) {

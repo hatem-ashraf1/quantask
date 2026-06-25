@@ -18,6 +18,7 @@ const PRIORITY_CONFIG = {
 };
 
 export function TaskCreateForm({ projectId, onClose, onCreate }: TaskCreateFormProps) {
+  // Modal form for creating a task with optional assignee, sprint, due date, and story points.
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState<keyof typeof PRIORITY_CONFIG>('medium');
@@ -29,6 +30,7 @@ export function TaskCreateForm({ projectId, onClose, onCreate }: TaskCreateFormP
   const [smartAssigning, setSmartAssigning] = useState(false);
   const [error, setError] = useState('');
 
+  // Permission-derived values decide which fields the current user can actually use.
   const project = PROJECTS.find((item) => item.id === projectId);
   const projectSprints = SPRINTS.filter((s) => s.projectId === projectId && s.status !== 'completed');
   const canCreateTask = canCreateTaskInProject(projectId);
@@ -39,6 +41,7 @@ export function TaskCreateForm({ projectId, onClose, onCreate }: TaskCreateFormP
     (user) => user.role !== 'viewer' && (!project || project.memberIds.includes(user.id))
   );
 
+  // Builds the backend payload from form state, converting empty strings into nulls where needed.
   const handleCreate = async () => {
     if (!canCreateTask) {
       setError('You do not have permission to create tasks in this project.');
@@ -69,6 +72,7 @@ export function TaskCreateForm({ projectId, onClose, onCreate }: TaskCreateFormP
     }
   };
 
+  // Smart assignment asks the backend for a recommendation based on the current title and description.
   const handleSmartAssign = async () => {
     if (!canAssign) {
       setError('Only a project manager can use smart assignment.');

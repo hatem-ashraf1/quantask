@@ -21,6 +21,7 @@ const NOTIF_ICONS: Record<Notification['type'], React.ReactNode> = {
   blocked: <AlertTriangle size={14} className="text-red-400" />,
 };
 
+// Converts notification timestamps into compact relative labels like "5m ago".
 function formatRelative(timestamp: string) {
   const d = new Date(timestamp);
   const diff = Math.max(0, Math.floor((Date.now() - d.getTime()) / 60000));
@@ -31,10 +32,12 @@ function formatRelative(timestamp: string) {
 }
 
 export function TopBar({ title, subtitle, onAuthClick, onNavigate }: TopBarProps) {
+  // Header bar for the current page title, search field, notifications, and profile menu.
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [notifications, setNotifications] = useState(NOTIFICATIONS);
   const [searchFocused, setSearchFocused] = useState(false);
+  // The visible role label reflects the active project scope, not just the global account role.
   const { activeProjectId, rolesFor } = useAuthorization();
   const scopedRoles = rolesFor('project', activeProjectId);
   const displayedRole = scopedRoles.includes('workspace-owner')
@@ -49,6 +52,7 @@ export function TopBar({ title, subtitle, onAuthClick, onNavigate }: TopBarProps
 
   const unread = notifications.filter((n) => !n.read).length;
 
+  // Notification reads are local UI state here; they make the badge disappear immediately.
   const markAllRead = () => {
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
   };
@@ -105,7 +109,7 @@ export function TopBar({ title, subtitle, onAuthClick, onNavigate }: TopBarProps
         </kbd>
       </div>
 
-      {/* Notification Bell */}
+      {/* Notification bell: opens a popover and marks individual items as read on click. */}
       <div className="relative">
         <button
           onClick={() => { setNotifOpen(!notifOpen); setProfileOpen(false); }}
@@ -197,7 +201,7 @@ export function TopBar({ title, subtitle, onAuthClick, onNavigate }: TopBarProps
         )}
       </div>
 
-      {/* Profile */}
+      {/* Profile menu: navigation shortcuts plus the sign-out action supplied by App. */}
       <div className="relative">
         <button
           onClick={() => { setProfileOpen(!profileOpen); setNotifOpen(false); }}

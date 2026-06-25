@@ -1,3 +1,4 @@
+// Reusable UI primitive for Sonner; product screens import this instead of rebuilding the pattern.
 "use client";
 
 import { useTheme } from "next-themes";

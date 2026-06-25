@@ -20,7 +20,8 @@ export type NavigationDecision = {
   message?: string;
 };
 
-const PROJECT_VIEWS: AppView[] = ['kanban', 'backlog', 'sprints', 'alltasks', 'settings'];
+const PROJECT_VIEWS: AppView[] = ['kanban', 'backlog', 'sprints', 'alltasks'];
+const PROJECT_SCOPED_VIEWS: AppView[] = [...PROJECT_VIEWS, 'settings'];
 const APP_BASE_PATH = normalizeBasePath(import.meta.env.BASE_URL || '/');
 
 function normalizeBasePath(basePath: string) {
@@ -44,7 +45,17 @@ export function stripAppBasePath(pathname: string) {
 }
 
 export function guardNavigation(view: AppView, projectId?: string): NavigationDecision {
-  if (!PROJECT_VIEWS.includes(view)) return { allowed: true, fallback: view };
+  if (view === 'settings' && !projectId) {
+    if (canAccess('workspace.view')) return { allowed: true, fallback: view };
+
+    return {
+      allowed: false,
+      fallback: 'dashboard',
+      message: 'You do not have access to this workspace.',
+    };
+  }
+
+  if (!PROJECT_SCOPED_VIEWS.includes(view)) return { allowed: true, fallback: view };
 
   if (!projectId || !canAccess('project.view', { projectId })) {
     return {
@@ -71,7 +82,8 @@ export function appPath(view: AppView, projectId?: string) {
   if (view === 'profile') return withAppBasePath('/profile');
   if (view === 'reports') return withAppBasePath('/reports');
   if (view === 'trash') return withAppBasePath('/trash');
-  if (PROJECT_VIEWS.includes(view) && projectId) return withAppBasePath(`/projects/${projectId}/${view}`);
+  if (view === 'settings' && !projectId) return withAppBasePath('/settings');
+  if (PROJECT_SCOPED_VIEWS.includes(view) && projectId) return withAppBasePath(`/projects/${projectId}/${view}`);
   return withAppBasePath('/');
 }
 
@@ -86,5 +98,6 @@ export function parseAppPath(pathname: string) {
   if (normalized === '/profile') return { projectId: '', view: 'profile' as AppView };
   if (normalized === '/reports') return { projectId: '', view: 'reports' as AppView };
   if (normalized === '/trash') return { projectId: '', view: 'trash' as AppView };
+  if (normalized === '/settings') return { projectId: '', view: 'settings' as AppView };
   return null;
 }

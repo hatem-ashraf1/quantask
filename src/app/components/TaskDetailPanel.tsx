@@ -3,16 +3,17 @@ import {
   X, Flag, Calendar, User2, ChevronDown, Sparkles, Paperclip, Send,
   Lock, Plus, AlertTriangle, CheckSquare, Square, ExternalLink,
   GitBranch, Clock, RotateCcw, Shield, Circle, CheckCircle2,
-  MessageSquare, Activity, FileText, Download, Zap, Trash2
+  MessageSquare, Activity, FileText, Download, Zap, Trash2, Edit3, Save
 } from 'lucide-react';
 import {
   CURRENT_USER, PROJECTS, Task, TaskStatus, TASKS, USERS, SPRINTS, getUserById, getSprintById, AI_SUGGESTIONS
 } from '../data/store';
-import { addComment, addDependency, addSubTask, assignTask, deleteTask, fetchTask, getSmartAssignee, toggleSubTask, updateTaskStatus } from '../api/client';
+import { addComment, addDependency, addSubTask, assignTask, deleteTask, fetchTask, getSmartAssignee, toggleSubTask, updateTaskDetails, updateTaskStatus } from '../api/client';
 import {
   canAssignTask,
   canCommentOnTask,
   canDeleteTaskInProject,
+  canManageProject,
   canManageSubtasks,
   canManageTaskDependencies,
   canSelfAssignTask,
@@ -37,6 +38,7 @@ const AVATAR_COLORS: Record<string, string> = {
   u1: '#5c5cf5', u2: '#22c55e', u3: '#f59e0b', u4: '#ef4444', u5: '#8b5cf6', u6: '#06b6d4',
 };
 
+// Shared formatter for activity timestamps inside the detail panel.
 function formatTime(ts: string) {
   return new Date(ts).toLocaleString('en-US', {
     month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -50,6 +52,7 @@ function AIAssignmentSheet({
   onAssign: (userId: string) => void;
   onClose: () => void;
 }) {
+  // Bottom sheet that previews AI assignee suggestions before applying one to the task.
   const [loading, setLoading] = useState(true);
   const [assigned, setAssigned] = useState<string | null>(null);
 
@@ -222,10 +225,12 @@ function AIAssignmentSheet({
 interface TaskDetailPanelProps {
   taskId: string | null;
   onClose: () => void;
+  onUpdated?: (task: Task) => void;
   onDeleted?: (taskId: string) => void;
 }
 
-export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelProps) {
+export function TaskDetailPanel({ taskId, onClose, onUpdated, onDeleted }: TaskDetailPanelProps) {
+  // Sliding side panel for viewing and editing one task without leaving the current page.
   const initialTask = TASKS.find((t) => t.id === taskId) || null;
   const [task, setTask] = useState<Task | null>(initialTask);
   const [activeTab, setActiveTab] = useState<'activity' | 'details'>('activity');
@@ -242,8 +247,15 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
   const [panelError, setPanelError] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [smartAssigning, setSmartAssigning] = useState(false);
+  const [editingDetails, setEditingDetails] = useState(false);
+  const [savingDetails, setSavingDetails] = useState(false);
+  const [editTitle, setEditTitle] = useState(initialTask?.title || '');
+  const [editDescription, setEditDescription] = useState(initialTask?.description || '');
+  const [editPriority, setEditPriority] = useState<Task['priority']>(initialTask?.priority || 'medium');
+  const [editDueDate, setEditDueDate] = useState(initialTask?.dueDate || '');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Fetch the freshest task details when the opened task changes, while using local data as a fallback.
   useEffect(() => {
     if (!taskId) return;
 
@@ -263,6 +275,15 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
     };
   }, [taskId]);
 
+  useEffect(() => {
+    if (!task) return;
+    setEditTitle(task.title);
+    setEditDescription(task.description || '');
+    setEditPriority(task.priority);
+    setEditDueDate(task.dueDate || '');
+    setEditingDetails(false);
+  }, [task?.id]);
+
   if (!task) return null;
 
   const assignee = task.assigneeId ? getUserById(task.assigneeId) : null;
@@ -275,19 +296,22 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
   const canManageDependencies = canManageTaskDependencies(task.projectId);
   const canManageTaskSubtasks = canManageSubtasks(task.projectId);
   const canComment = canCommentOnTask(task.projectId);
-  const canContribute = canComment || canManageTaskSubtasks;
+  const canEditTaskDetails = canManageProject(task.projectId);
   const canChangeStatus =
     canTransitionTask(task.projectId, 'InProgress') ||
     canTransitionTask(task.projectId, 'Done');
   const project = PROJECTS.find((item) => item.id === task.projectId);
   const assignableUsers = USERS.filter((user) => user.role !== 'viewer' && (!project || project.memberIds.includes(user.id)));
 
+  // Keep both React state and the local in-memory store synchronized after task mutations.
   const replaceTask = (nextTask: Task) => {
     const localTask = TASKS.find((item) => item.id === nextTask.id);
     if (localTask) Object.assign(localTask, nextTask);
     setTask(nextTask);
+    onUpdated?.(nextTask);
   };
 
+  // Status changes are guarded by permissions, dependency rules, and sub-task completion warnings.
   const handleStatusChange = async (newStatus: TaskStatus) => {
     setShowStatusDropdown(false);
     if (!canTransitionTask(task.projectId, newStatus)) {
@@ -342,6 +366,10 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
   };
 
   const handleAssign = async (userId: string) => {
+    if (!userId) {
+      setPanelError('The backend does not support unassigning an existing task yet.');
+      return;
+    }
     const assigningSelf = userId === CURRENT_USER.id;
     if ((!assigningSelf && !canAssign) || (assigningSelf && !canAssign && !canSelfAssign)) {
       setPanelError('You do not have permission to assign this task.');
@@ -374,6 +402,7 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
     }
   };
 
+  // Comments can include selected files; the API response is normalized before appending to activity.
   const handleAddComment = async () => {
     if (!canComment) {
       setPanelError('You do not have permission to comment on this task.');
@@ -456,6 +485,35 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
     }
   };
 
+  const handleSaveTaskDetails = async () => {
+    if (!canEditTaskDetails) {
+      setPanelError('Only the workspace owner or this project manager can edit task details.');
+      return;
+    }
+    if (!editTitle.trim()) {
+      setPanelError('Task title is required.');
+      return;
+    }
+
+    setSavingDetails(true);
+    setPanelError('');
+
+    try {
+      replaceTask(await updateTaskDetails(task.id, {
+        title: editTitle.trim(),
+        description: editDescription.trim(),
+        priority: editPriority,
+        dueDate: editDueDate || null,
+      }));
+      setEditingDetails(false);
+    } catch (err) {
+      setPanelError(err instanceof Error ? err.message : 'Unable to update task details.');
+    } finally {
+      setSavingDetails(false);
+    }
+  };
+
+  // Delete moves the task to Trash and tells the parent view to refresh its lists.
   const handleDeleteTask = async () => {
     if (!canDeleteTask) {
       setPanelError('Only project managers can delete tasks.');
@@ -487,7 +545,7 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
       {/* Backdrop */}
       <div className="fixed inset-0 z-40 bg-black/20" onClick={onClose} />
 
-      {/* Panel */}
+      {/* Panel: header actions, task content, and metadata sidebar live in this fixed drawer. */}
       <div
         className="fixed right-0 top-0 bottom-0 z-50 flex flex-col border-l shadow-2xl"
         style={{
@@ -515,15 +573,57 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
               )}
             </div>
             {/* Title (editable) */}
-            <h2
-              className="text-base text-[var(--foreground)] leading-snug"
-              contentEditable={canContribute}
-              suppressContentEditableWarning
-              onBlur={(e) => setTask((prev) => prev ? { ...prev, title: e.currentTarget.textContent || '' } : prev)}
-            >
-              {task.title}
-            </h2>
+            {editingDetails ? (
+              <input
+                value={editTitle}
+                onChange={(event) => setEditTitle(event.target.value)}
+                className="w-full rounded-lg border px-3 py-2 text-sm outline-none"
+                style={{ background: 'var(--input-background)', borderColor: 'var(--border)', color: 'var(--foreground)' }}
+              />
+            ) : (
+              <h2 className="text-base text-[var(--foreground)] leading-snug">
+                {task.title}
+              </h2>
+            )}
           </div>
+          {canEditTaskDetails && (
+            editingDetails ? (
+              <>
+                <button
+                  onClick={handleSaveTaskDetails}
+                  disabled={savingDetails}
+                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-white disabled:opacity-50"
+                  style={{ background: 'var(--primary)' }}
+                >
+                  <Save size={13} />
+                  {savingDetails ? 'Saving...' : 'Save'}
+                </button>
+                <button
+                  onClick={() => {
+                    setEditingDetails(false);
+                    setEditTitle(task.title);
+                    setEditDescription(task.description || '');
+                    setEditPriority(task.priority);
+                    setEditDueDate(task.dueDate || '');
+                  }}
+                  disabled={savingDetails}
+                  className="rounded-lg border px-3 py-1.5 text-xs text-[var(--muted-foreground)] disabled:opacity-50"
+                  style={{ borderColor: 'var(--border)' }}
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => setEditingDetails(true)}
+                className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs text-[var(--foreground)] transition-colors hover:bg-[var(--muted)]"
+                style={{ borderColor: 'var(--border)' }}
+              >
+                <Edit3 size={13} />
+                Edit
+              </button>
+            )
+          )}
           {canDeleteTask && (
             <button
               onClick={handleDeleteTask}
@@ -593,13 +693,26 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
           </div>
 
           {/* Priority */}
-          <button
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border hover:border-[var(--primary)] transition-colors"
-            style={{ borderColor: 'var(--border)', color: priorityCfg.color }}
-          >
-            <Flag size={11} />
-            {priorityCfg.label}
-          </button>
+          {editingDetails ? (
+            <select
+              value={editPriority}
+              onChange={(event) => setEditPriority(event.target.value as Task['priority'])}
+              className="rounded-lg border px-2.5 py-1.5 text-xs outline-none"
+              style={{ background: 'var(--input-background)', borderColor: 'var(--border)', color: 'var(--foreground)' }}
+            >
+              {(Object.entries(PRIORITY_CONFIG) as [Task['priority'], (typeof PRIORITY_CONFIG)[Task['priority']]][]).map(([priority, cfg]) => (
+                <option key={priority} value={priority}>{cfg.label}</option>
+              ))}
+            </select>
+          ) : (
+            <button
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border hover:border-[var(--primary)] transition-colors"
+              style={{ borderColor: 'var(--border)', color: priorityCfg.color }}
+            >
+              <Flag size={11} />
+              {priorityCfg.label}
+            </button>
+          )}
         </div>
         {panelError && (
           <div className="px-5 py-2 text-xs text-red-600 border-b" style={{ background: '#fef2f2', borderColor: 'var(--border)' }}>
@@ -615,7 +728,17 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
               {/* Description */}
               <div>
                 <label className="block text-xs text-[var(--muted-foreground)] mb-2">Description</label>
-                <p className="text-sm text-[var(--foreground)] leading-relaxed">{task.description}</p>
+                {editingDetails ? (
+                  <textarea
+                    value={editDescription}
+                    onChange={(event) => setEditDescription(event.target.value)}
+                    rows={5}
+                    className="w-full resize-none rounded-lg border px-3 py-2 text-sm outline-none"
+                    style={{ background: 'var(--input-background)', borderColor: 'var(--border)', color: 'var(--foreground)' }}
+                  />
+                ) : (
+                  <p className="text-sm text-[var(--foreground)] leading-relaxed">{task.description || 'No description provided.'}</p>
+                )}
               </div>
 
               {/* Sub-tasks */}
@@ -976,8 +1099,9 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
                 <label className="block text-[10px] text-[var(--muted-foreground)] mb-1.5 uppercase tracking-wider">Due Date</label>
                 <input
                   type="date"
-                  disabled={!canContribute}
-                  defaultValue={task.dueDate || ''}
+                  disabled={!editingDetails}
+                  value={editingDetails ? editDueDate : task.dueDate || ''}
+                  onChange={(event) => setEditDueDate(event.target.value)}
                   min={sprint?.startDate}
                   max={sprint?.endDate}
                   className="w-full px-2.5 py-2 rounded-lg border text-xs outline-none"
@@ -1026,7 +1150,7 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
                     className="mt-2 w-full rounded-lg border px-2.5 py-2 text-xs outline-none"
                     style={{ borderColor: 'var(--border)', color: 'var(--foreground)', background: 'var(--input-background)' }}
                   >
-                    <option value="">Unassigned</option>
+                    {!task.assigneeId && <option value="">Unassigned</option>}
                     {assignableUsers.map((user) => (
                       <option key={user.id} value={user.id}>
                         {user.name}
@@ -1069,17 +1193,20 @@ export function TaskDetailPanel({ taskId, onClose, onDeleted }: TaskDetailPanelP
                     ([p, cfg]) => (
                       <button
                         key={p}
-                        onClick={() => setTask((prev) => prev ? { ...prev, priority: p } : prev)}
-                        disabled={!canContribute}
+                        onClick={() => {
+                          setEditPriority(p);
+                          if (!editingDetails && canEditTaskDetails) setEditingDetails(true);
+                        }}
+                        disabled={!canEditTaskDetails}
                         className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs transition-colors hover:bg-[var(--muted)]"
                         style={{
-                          background: task.priority === p ? 'var(--muted)' : 'transparent',
-                          color: task.priority === p ? cfg.color : 'var(--muted-foreground)',
+                          background: (editingDetails ? editPriority : task.priority) === p ? 'var(--muted)' : 'transparent',
+                          color: (editingDetails ? editPriority : task.priority) === p ? cfg.color : 'var(--muted-foreground)',
                         }}
                       >
                         <Flag size={10} style={{ color: cfg.color }} />
                         {cfg.label}
-                        {task.priority === p && <CheckCircle2 size={10} className="ml-auto" style={{ color: cfg.color }} />}
+                        {(editingDetails ? editPriority : task.priority) === p && <CheckCircle2 size={10} className="ml-auto" style={{ color: cfg.color }} />}
                       </button>
                     )
                   )}

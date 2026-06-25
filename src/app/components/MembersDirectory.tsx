@@ -10,6 +10,7 @@ const AVATAR_COLORS: Record<string, string> = {
 
 const AVATAR_PALETTE = ['#4f46e5', '#047857', '#b45309', '#be123c', '#7e22ce', '#0e7490'];
 
+// Stable fallback color generator for users not in the predefined avatar map.
 function avatarColor(userId: string) {
   if (AVATAR_COLORS[userId]) return AVATAR_COLORS[userId];
 
@@ -28,6 +29,7 @@ function secondaryMemberLabel(user: User) {
 }
 
 function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: () => Promise<void> }) {
+  // Owner-only modal for inviting a new member by email.
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
   const [error, setError] = useState('');
@@ -113,12 +115,14 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
 }
 
 export function MembersDirectory() {
+  // Workspace directory: loads members, filters them, and exposes invitations to owners.
   const [showInvite, setShowInvite] = useState(false);
   const [search, setSearch] = useState('');
   const [members, setMembers] = useState<User[]>([...USERS]);
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [membersError, setMembersError] = useState('');
 
+  // Prefer backend members, but fall back to seeded local users if the request fails.
   const loadMembers = async () => {
     if (!WORKSPACE.id) return;
 
@@ -140,6 +144,7 @@ export function MembersDirectory() {
     loadMembers();
   }, [WORKSPACE.id]);
 
+  // Search checks the visible name/email plus the secondary label shown under the avatar.
   const displayed = members.filter(
     (u) =>
       u.name.toLowerCase().includes(search.toLowerCase()) ||

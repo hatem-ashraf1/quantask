@@ -24,6 +24,7 @@ type GitHubIntegrationSectionProps = {
   projectId: string;
 };
 
+// Date formatter used for repository sync timestamps.
 function formatDate(value?: string) {
   if (!value) return 'Not available';
   return new Intl.DateTimeFormat(undefined, {
@@ -55,6 +56,7 @@ function ConnectRepositoryDialog({
   onClose: () => void;
   onConnected: (connection: GitHubConnection) => void;
 }) {
+  // Modal for collecting repository details and a one-time access token.
   const [repositoryOwner, setRepositoryOwner] = useState('');
   const [repositoryName, setRepositoryName] = useState('');
   const [accessToken, setAccessToken] = useState('');
@@ -167,6 +169,7 @@ function ConnectRepositoryDialog({
 }
 
 export function GitHubIntegrationSection({ projectId }: GitHubIntegrationSectionProps) {
+  // Project settings section for connecting GitHub and showing synced development analytics.
   const canManage = canManageProject(projectId);
   const [analytics, setAnalytics] = useState<GitHubAnalytics | null>(null);
   const [connection, setConnection] = useState<GitHubConnection | null>(null);
@@ -176,6 +179,7 @@ export function GitHubIntegrationSection({ projectId }: GitHubIntegrationSection
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
+  // Loads the latest analytics snapshot; 404 simply means the project is not connected yet.
   const loadAnalytics = async () => {
     setLoading(true);
     setError('');
@@ -198,6 +202,7 @@ export function GitHubIntegrationSection({ projectId }: GitHubIntegrationSection
     void loadAnalytics();
   }, [projectId]);
 
+  // Explicit sync asks the backend to refresh GitHub metrics for this project.
   const sync = async () => {
     setSyncing(true);
     setMessage('');

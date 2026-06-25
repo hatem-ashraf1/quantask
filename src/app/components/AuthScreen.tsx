@@ -30,6 +30,7 @@ interface AuthScreenProps {
   invitationPending?: boolean;
 }
 
+// These small helpers keep the JSX readable by translating auth modes into user-facing copy.
 function modeTitle(mode: AuthMode) {
   if (mode === 'register') return 'Create account';
   if (mode === 'join') return "You're invited!";
@@ -76,6 +77,7 @@ const PASSWORD_RULES = [
 
 const GITHUB_HANDLE_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/;
 
+// Frontend validation gives immediate feedback before the signup request reaches the backend.
 function validateSignup(
   fullName: string,
   password: string,
@@ -113,6 +115,7 @@ export function AuthScreen({
   inviteToken,
   invitationPending = false,
 }: AuthScreenProps) {
+  // One component handles login, registration, email confirmation, password reset, and invitation joining.
   const [mode, setMode] = useState<AuthMode>(inviteToken ? 'join' : initialMode);
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState('');
@@ -130,6 +133,7 @@ export function AuthScreen({
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
+  // Clear old messages whenever the user changes auth flow or starts a new request.
   const clearFeedback = () => {
     setError('');
     setNotice('');
@@ -144,6 +148,7 @@ export function AuthScreen({
     }
   };
 
+  // Submit branches by mode, so each auth form can share the same layout and button.
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     clearFeedback();
@@ -237,6 +242,7 @@ export function AuthScreen({
       className="min-h-screen flex"
       style={{ background: 'var(--background)', fontFamily: 'var(--font-family-body)' }}
     >
+      {/* Left brand panel appears on large screens; the actual form stays on the right. */}
       <div
         className="hidden lg:flex flex-col justify-between w-[480px] flex-shrink-0 p-12"
         style={{ background: '#0d0d12' }}
@@ -331,6 +337,7 @@ export function AuthScreen({
                 </div>
               )}
 
+              {/* The visible fields change with mode, but they all submit through handleSubmit above. */}
               <form onSubmit={handleSubmit} className="space-y-4">
                 {error && (
                   <div

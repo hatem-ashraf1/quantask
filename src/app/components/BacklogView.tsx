@@ -32,6 +32,7 @@ interface BacklogViewProps {
 }
 
 export function BacklogView({ projectId, onTaskClick }: BacklogViewProps) {
+  // Backlog screen shows unscheduled work alongside sprint-assigned tasks for planning.
   const [filterAssignee, setFilterAssignee] = useState<string>('all');
   const [filterPriority, setFilterPriority] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
@@ -44,6 +45,7 @@ export function BacklogView({ projectId, onTaskClick }: BacklogViewProps) {
   const canCreateTasks = canCreateTaskInProject(projectId);
   const canMoveTasks = canMoveTaskToSprint(projectId);
 
+  // The raw task list is split into backlog/sprint groups after filters are applied.
   const allTasks = TASKS.filter((t) => t.projectId === projectId && !t.isDeleted);
   const backlogTasks = allTasks.filter((t) => !t.sprintId || t.sprintId === null);
   const sprintTasks = allTasks.filter((t) => t.sprintId);
@@ -67,6 +69,7 @@ export function BacklogView({ projectId, onTaskClick }: BacklogViewProps) {
     grouped[key].push(t);
   });
 
+  // Permission checks happen before opening modals so restricted users get an immediate explanation.
   const openCreateForm = () => {
     if (!canCreateTasks) {
       setCreateError('You do not have permission to create tasks in this project.');
@@ -76,6 +79,7 @@ export function BacklogView({ projectId, onTaskClick }: BacklogViewProps) {
     setShowCreateForm(true);
   };
 
+  // Moving a task updates the backend; refreshKey forces the local derived lists to re-evaluate.
   const handleMoveTaskToSprint = async (task: Task, sprintId: string | null) => {
     if (!canMoveTasks) {
       setCreateError('Only project managers can move tasks between sprints.');
@@ -265,7 +269,7 @@ export function BacklogView({ projectId, onTaskClick }: BacklogViewProps) {
         </div>
       </div>
 
-      {/* Task list */}
+      {/* Task list: each group represents either the backlog or a specific sprint. */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {/* Backlog group */}
         {Object.entries(grouped).map(([sprintId, tasks]) => {

@@ -1,3 +1,4 @@
+// Reusable UI primitive for Navigation Menu; product screens import this instead of rebuilding the pattern.
 import * as React from "react";
 import * as NavigationMenuPrimitive from "@radix-ui/react-navigation-menu";
 import { cva } from "class-variance-authority";

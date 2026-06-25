@@ -27,6 +27,7 @@ const AVATAR_COLORS: Record<string, string> = {
 };
 
 function PriorityFlag({ priority }: { priority: Task['priority'] }) {
+  // Tiny reusable badge that keeps priority colors consistent across cards.
   const cfg = PRIORITY_CONFIG[priority];
   return (
     <span
@@ -40,6 +41,7 @@ function PriorityFlag({ priority }: { priority: Task['priority'] }) {
 }
 
 function DueDatePill({ dueDate }: { dueDate: string | null }) {
+  // Returns nothing when there is no due date, otherwise highlights overdue and soon dates.
   if (!dueDate) return null;
   const due = new Date(dueDate);
   const now = new Date('2024-02-07');
@@ -71,6 +73,7 @@ function TaskCard({
   onDragStart: (e: React.DragEvent, task: Task) => void;
   canDrag: boolean;
 }) {
+  // Individual draggable Kanban card; it summarizes the task without opening the detail panel yet.
   const assignee = task.assigneeId ? getUserById(task.assigneeId) : null;
   const completedSubs = task.subTasks.filter((s) => s.completed).length;
   const totalSubs = task.subTasks.length;
@@ -189,6 +192,7 @@ interface KanbanBoardProps {
 }
 
 export function KanbanBoard({ projectId, onTaskClick }: KanbanBoardProps) {
+  // Main board view: columns are task statuses and cards can be dragged between them.
   const [tasks, setTasks] = useState(TASKS.filter((t) => t.projectId === projectId && !t.isDeleted));
   const [dragOverCol, setDragOverCol] = useState<TaskStatus | null>(null);
   const dragTaskRef = useRef<Task | null>(null);
@@ -196,6 +200,7 @@ export function KanbanBoard({ projectId, onTaskClick }: KanbanBoardProps) {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const canCreateTasks = canCreateTaskInProject(projectId);
 
+  // Re-read local task data when the selected project changes.
   useEffect(() => {
     setTasks(TASKS.filter((t) => t.projectId === projectId && !t.isDeleted));
   }, [projectId]);
@@ -205,6 +210,7 @@ export function KanbanBoard({ projectId, onTaskClick }: KanbanBoardProps) {
     e.dataTransfer.effectAllowed = 'move';
   };
 
+  // Drag/drop performs an optimistic UI update, then rolls back if the API rejects the status change.
   const handleDrop = (e: React.DragEvent, targetStatus: TaskStatus) => {
     e.preventDefault();
     const task = dragTaskRef.current;

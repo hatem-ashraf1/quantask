@@ -35,6 +35,7 @@ function CreateSprintModal({
   onClose: () => void;
   onCreated: () => void;
 }) {
+  // Modal for project managers to create a sprint with non-overlapping dates.
   const [name, setName] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -44,6 +45,7 @@ function CreateSprintModal({
   const [error, setError] = useState('');
   const canManage = canManageProject(projectId);
 
+  // Prevents sprint date ranges from overlapping inside the same project.
   const checkOverlap = (start: string, end: string) => {
     const s = new Date(start);
     const e = new Date(end);
@@ -213,6 +215,7 @@ function SprintCard({
   onChanged: () => void;
   canManage: boolean;
 }) {
+  // Collapsible sprint row showing sprint progress, lifecycle actions, and its tasks.
   const [expanded, setExpanded] = useState(sprint.status === 'active');
   const [savingStatus, setSavingStatus] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -454,8 +457,10 @@ function SprintCard({
 }
 
 export function SprintView({ projectId, onTaskClick, onBacklogClick }: SprintViewProps) {
+  // Sprint planning page for creating, activating, completing, and deleting sprints.
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [, setRefreshKey] = useState(0);
+  // Derived list keeps this screen scoped to the currently selected project.
   const projectSprints = SPRINTS.filter((s) => s.projectId === projectId);
   const canManage = canManageProject(projectId);
 

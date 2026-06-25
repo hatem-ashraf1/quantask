@@ -61,6 +61,8 @@ const VIEW_TITLES: Record<View, { title: string; subtitle?: string }> = {
 };
 
 export default function App() {
+  // Root application shell: decides whether the user sees auth, workspace selection, or the selected workspace view.
+  // Initial values are read once from the URL/session so refreshes reopen the same workspace and view when possible.
   const [initialNavigation] = useState(() => getAppNavigationSession());
   const [initialPath] = useState(() => parseAppPath(window.location.pathname));
   const [invitationRoute, setInvitationRoute] = useState(
@@ -90,12 +92,14 @@ export default function App() {
   const [showProjectCreate, setShowProjectCreate] = useState(false);
   const [taskRevision, setTaskRevision] = useState(0);
 
+  // Invitation links are preserved before auth so a user can sign in and still accept the same invite.
   useEffect(() => {
     if (invitationRoute && invitationToken) {
       storePendingInvitationToken(invitationToken);
     }
   }, [invitationRoute, invitationToken]);
 
+  // Central API auth listener: forbidden requests show a message, while expired sessions force a logout.
   useEffect(() => {
     return subscribeApiAuthorizationEvents((event) => {
       if (event.type === 'forbidden') {
@@ -136,6 +140,7 @@ export default function App() {
     window.history.replaceState({}, '', appPath(view, selectedProjectId));
   }, [authed, selectedProjectId, selectedWorkspaceId, view]);
 
+  // When a workspace is selected, hydrate its projects/tasks before showing project-dependent screens.
   useEffect(() => {
     if (!selectedWorkspaceId) return;
 
@@ -290,6 +295,16 @@ export default function App() {
           setWorkspaceSelectionError('');
           setView('auth');
         }}
+        onLogout={() => {
+          logoutFromBackend().finally(() => {
+            clearAppNavigationSession();
+            setAuthed(false);
+            setSelectedWorkspaceId(null);
+            setSelectedProjectId('');
+            setWorkspaceSelectionError('');
+            setView('auth');
+          });
+        }}
         onWorkspaceSelect={(workspaceId, role) => {
           applySelectedWorkspaceRole(role, workspaceId);
           setWorkspaceSelectionError('');
@@ -317,6 +332,7 @@ export default function App() {
     );
   }
 
+  // Project selection always routes through authorization guards before opening the board.
   const handleProjectSelect = (projectId: string) => {
     setSelectedProjectId(projectId);
     const decision = guardNavigation('kanban', projectId);
@@ -333,6 +349,10 @@ export default function App() {
     setTaskRevision((revision) => revision + 1);
   };
 
+  const handleTaskUpdated = () => {
+    setTaskRevision((revision) => revision + 1);
+  };
+
   const handleViewChange = (v: View) => {
     const decision = guardNavigation(v, selectedProjectId);
     if (!decision.allowed) {
@@ -344,6 +364,19 @@ export default function App() {
     setOpenTaskId(null);
   };
 
+  const handleWorkspaceSettings = () => {
+    const decision = guardNavigation('settings', '');
+    if (!decision.allowed) {
+      toast.error(decision.message);
+      setView(decision.fallback);
+      return;
+    }
+
+    setSelectedProjectId('');
+    setView('settings');
+    setOpenTaskId(null);
+  };
+
   const handleWorkspaceExited = () => {
     clearAppNavigationSession();
     setSelectedWorkspaceId(null);
@@ -352,9 +385,11 @@ export default function App() {
     setView('workspace-select');
   };
 
+  // These derived flags decide whether to show project pages or a restricted-access notice.
   const canCreateProject = userCanCreateProject();
   const selectedProject = PROJECTS.find((project) => project.id === selectedProjectId);
-  const isProjectView = ['kanban', 'backlog', 'sprints', 'alltasks', 'settings'].includes(view);
+  const isProjectView = ['kanban', 'backlog', 'sprints', 'alltasks'].includes(view)
+    || (view === 'settings' && Boolean(selectedProjectId));
   const hasSelectedProjectAccess = Boolean(
     selectedProject && canViewProject(selectedProject.id)
   );
@@ -376,7 +411,7 @@ export default function App() {
       className="flex h-screen w-screen overflow-hidden"
       style={{ background: 'var(--background)', fontFamily: 'var(--font-family-body)' }}
     >
-      {/* Sidebar */}
+      {/* Sidebar: persistent workspace/project navigation for the authenticated app. */}
       <Sidebar
         currentView={view as any}
         selectedProjectId={selectedProjectId}
@@ -391,6 +426,7 @@ export default function App() {
           setWorkspaceSelectionError('');
           setView('workspace-select');
         }}
+        onWorkspaceSettings={handleWorkspaceSettings}
       />
 
       {/* Main area */}
@@ -411,7 +447,7 @@ export default function App() {
           }}
         />
 
-        {/* Page content */}
+        {/* Page content: only one main view renders at a time based on the current route-like state. */}
         <main className="flex-1 overflow-hidden">
           {loadError && (
             <div
@@ -483,6 +519,7 @@ export default function App() {
         <TaskDetailPanel
           taskId={openTaskId}
           onClose={() => setOpenTaskId(null)}
+          onUpdated={handleTaskUpdated}
           onDeleted={handleTaskDeleted}
         />
       )}

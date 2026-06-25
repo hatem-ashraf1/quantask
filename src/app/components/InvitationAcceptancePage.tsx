@@ -19,6 +19,7 @@ interface InvitationAcceptancePageProps {
 
 const acceptanceRequests = new Map<string, Promise<string | undefined>>();
 
+// Converts backend invitation failures into the exact UI action the user should see.
 function classifyInvitationError(error: unknown): { kind: InvitationErrorKind; message: string } {
   const message = error instanceof Error ? error.message : '';
   const normalized = message.toLowerCase();
@@ -65,6 +66,7 @@ function classifyInvitationError(error: unknown): { kind: InvitationErrorKind; m
   };
 }
 
+// Accepts an invite, then compares workspace lists to discover which workspace was joined.
 async function acceptAndFindWorkspace(token: string) {
   const previousAttempt = getInvitationAttempt();
   let beforeIds: Set<string>;
@@ -111,6 +113,7 @@ async function acceptAndFindWorkspace(token: string) {
   }
 }
 
+// De-duplicates accept calls so React re-renders do not submit the same token twice.
 function getAcceptanceRequest(token: string) {
   const existing = acceptanceRequests.get(token);
   if (existing) return existing;
@@ -127,12 +130,14 @@ export function InvitationAcceptancePage({
   onAuthenticationRequired,
   onUseAnotherAccount,
 }: InvitationAcceptancePageProps) {
+  // Full-page invitation flow that handles loading, success, retry, and wrong-account states.
   const [state, setState] = useState<InvitationState>('loading');
   const [errorKind, setErrorKind] = useState<InvitationErrorKind>('retryable');
   const [message, setMessage] = useState('Accepting your workspace invitation...');
   const [attempt, setAttempt] = useState(0);
   const redirectTimerRef = useRef<number | null>(null);
 
+  // Runs whenever the token or retry attempt changes; cleanup stops late redirects after unmount.
   useEffect(() => {
     let active = true;
 

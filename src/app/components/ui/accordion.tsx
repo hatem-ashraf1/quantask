@@ -1,3 +1,4 @@
+// Reusable UI primitive for Accordion; product screens import this instead of rebuilding the pattern.
 "use client";
 
 import * as React from "react";

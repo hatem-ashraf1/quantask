@@ -1,8 +1,9 @@
 import { ChangeEvent, FormEvent, useEffect, useState } from 'react';
-import { Camera, CheckCircle2, Loader2, Save, Settings, User } from 'lucide-react';
+import { Camera, CheckCircle2, Github, Loader2, Save, Settings, User } from 'lucide-react';
 import { CURRENT_USER } from '../data/store';
 import { fetchMyProfile, updateMyProfile, uploadMyProfilePicture } from '../api/client';
 
+// Keeps backend/network profile errors readable for this screen.
 function profileError(error: unknown, fallback: string) {
   const message = error instanceof Error ? error.message : fallback;
   if (message.includes('Unable to reach the backend')) return 'Cannot reach the backend right now. Please try again later.';
@@ -10,7 +11,9 @@ function profileError(error: unknown, fallback: string) {
 }
 
 export function ProfileView() {
+  // Personal profile page for editing name, bio, photo, and local preference toggles.
   const [fullName, setFullName] = useState(CURRENT_USER.name);
+  const [gitHubHandle, setGitHubHandle] = useState(CURRENT_USER.githubHandle || '');
   const [bio, setBio] = useState(CURRENT_USER.bio || '');
   const [profilePictureUrl, setProfilePictureUrl] = useState(CURRENT_USER.profilePictureUrl || '');
   const [loading, setLoading] = useState(false);
@@ -19,6 +22,7 @@ export function ProfileView() {
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
 
+  // Load the current profile once, avoiding state updates if the user navigates away mid-request.
   useEffect(() => {
     let active = true;
     setLoading(true);
@@ -26,6 +30,7 @@ export function ProfileView() {
       .then((profile) => {
         if (!active) return;
         setFullName(profile.name);
+        setGitHubHandle(profile.githubHandle || '');
         setBio(profile.bio || '');
         setProfilePictureUrl(profile.profilePictureUrl || '');
       })
@@ -41,6 +46,7 @@ export function ProfileView() {
     };
   }, []);
 
+  // Saves text profile fields through the API and mirrors the returned values into the form.
   const saveProfile = async (event: FormEvent) => {
     event.preventDefault();
     if (!fullName.trim()) {
@@ -53,8 +59,13 @@ export function ProfileView() {
     setError('');
 
     try {
-      const profile = await updateMyProfile({ fullName: fullName.trim(), bio: bio.trim() });
+      const profile = await updateMyProfile({
+        fullName: fullName.trim(),
+        bio: bio.trim(),
+        githubHandle: gitHubHandle.trim(),
+      });
       setFullName(profile.name);
+      setGitHubHandle(profile.githubHandle || '');
       setBio(profile.bio || '');
       setNotice('Profile updated.');
     } catch (requestError) {
@@ -64,6 +75,7 @@ export function ProfileView() {
     }
   };
 
+  // Uploads a selected image immediately and clears the file input so the same file can be reselected later.
   const uploadPicture = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -143,6 +155,23 @@ export function ProfileView() {
                   value={fullName}
                   onChange={(event) => setFullName(event.target.value)}
                   disabled={loading}
+                  className="w-full rounded-lg border px-3 py-2.5 text-sm outline-none"
+                  style={{ background: 'var(--input-background)', borderColor: 'var(--border)', color: 'var(--foreground)' }}
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 flex items-center gap-1.5 text-xs text-[var(--muted-foreground)]">
+                  <Github size={12} />
+                  GitHub handle
+                </span>
+                <input
+                  value={gitHubHandle}
+                  onChange={(event) => setGitHubHandle(event.target.value)}
+                  disabled={loading}
+                  placeholder="octocat"
+                  maxLength={39}
+                  autoCapitalize="none"
+                  spellCheck={false}
                   className="w-full rounded-lg border px-3 py-2.5 text-sm outline-none"
                   style={{ background: 'var(--input-background)', borderColor: 'var(--border)', color: 'var(--foreground)' }}
                 />

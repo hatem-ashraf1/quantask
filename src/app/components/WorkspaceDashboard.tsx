@@ -12,6 +12,7 @@ interface WorkspaceDashboardProps {
 const AVATAR_COLORS = ['#5c5cf5', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
 
 function ProjectCard({ project, onClick }: { project: Project; onClick: () => void }) {
+  // Dashboard card summarizing one project, including access restrictions for non-members.
   const isProjectMember = canViewProject(project.id);
   const projectTasks = TASKS.filter((t) => t.projectId === project.id && !t.isDeleted);
   const doneTasks = projectTasks.filter((t) => t.status === 'Done').length;
@@ -19,6 +20,7 @@ function ProjectCard({ project, onClick }: { project: Project; onClick: () => vo
   const members = USERS.filter((u) => project.memberIds.includes(u.id));
   const progress = projectTasks.length > 0 ? Math.round((doneTasks / projectTasks.length) * 100) : 0;
 
+  // Status counts feed the mini breakdown row on each project card.
   const statusCounts = {
     ToDo: projectTasks.filter((t) => t.status === 'ToDo').length,
     InProgress: projectTasks.filter((t) => t.status === 'InProgress').length,
@@ -189,6 +191,7 @@ function ProjectCard({ project, onClick }: { project: Project; onClick: () => vo
 }
 
 function EmptyState({ onCreate, canCreateProject }: { onCreate: () => void; canCreateProject: boolean }) {
+  // Friendly empty dashboard shown before the workspace has any projects.
   return (
     <div className="flex flex-col items-center justify-center py-24 text-center">
       {/* Illustration */}
@@ -224,6 +227,7 @@ function EmptyState({ onCreate, canCreateProject }: { onCreate: () => void; canC
 }
 
 export function WorkspaceDashboard({ onProjectSelect, onCreateProject }: WorkspaceDashboardProps) {
+  // Workspace home page with overall task stats and project cards.
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectKey, setNewProjectKey] = useState('');
@@ -233,6 +237,7 @@ export function WorkspaceDashboard({ onProjectSelect, onCreateProject }: Workspa
   const [, setRefreshKey] = useState(0);
   const canCreateProjects = canCreateProject();
 
+  // Routes creation through the parent modal only when the current user is allowed to create projects.
   const requestProjectCreate = () => {
     if (canCreateProjects) {
       onCreateProject();
@@ -242,6 +247,7 @@ export function WorkspaceDashboard({ onProjectSelect, onCreateProject }: Workspa
     setCreateError('Only workspace owners and PMs can create projects.');
   };
 
+  // Workspace-level metrics ignore deleted tasks so the dashboard reflects active work.
   const totalTasks = TASKS.filter((t) => !t.isDeleted).length;
   const activeTasks = TASKS.filter((t) => t.status === 'InProgress' && !t.isDeleted).length;
   const doneTasks = TASKS.filter((t) => t.status === 'Done' && !t.isDeleted).length;

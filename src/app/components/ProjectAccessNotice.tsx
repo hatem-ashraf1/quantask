@@ -5,6 +5,7 @@ interface ProjectAccessNoticeProps {
 }
 
 export function ProjectAccessNotice({ projectName }: ProjectAccessNoticeProps) {
+  // Shown instead of project screens when the user belongs to the workspace but not this project.
   return (
     <div
       className="h-full flex items-center justify-center px-6"

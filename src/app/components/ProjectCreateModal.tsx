@@ -10,6 +10,7 @@ interface ProjectCreateModalProps {
 }
 
 export function ProjectCreateModal({ onClose, onCreated }: ProjectCreateModalProps) {
+  // Workspace-level create project modal, including optional initial project members.
   const [name, setName] = useState('');
   const [key, setKey] = useState('');
   const [description, setDescription] = useState('');
@@ -19,6 +20,7 @@ export function ProjectCreateModal({ onClose, onCreated }: ProjectCreateModalPro
   const workspaceMembers = USERS.filter((user) => user.id !== CURRENT_USER.id);
   const canCreateProjects = canCreateProject();
 
+  // Checkbox helper that adds/removes a workspace member from the initial project team.
   const toggleMember = (userId: string) => {
     setSelectedMemberIds((prev) =>
       prev.includes(userId)
@@ -27,6 +29,7 @@ export function ProjectCreateModal({ onClose, onCreated }: ProjectCreateModalPro
     );
   };
 
+  // Creates the project first, then assigns selected members as developers.
   const handleCreate = async () => {
     if (!name.trim()) return;
     if (!canCreateProjects) {

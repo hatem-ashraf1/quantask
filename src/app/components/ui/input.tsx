@@ -1,3 +1,4 @@
+// Reusable UI primitive for Input; product screens import this instead of rebuilding the pattern.
 import * as React from "react";
 
 import { cn } from "./utils";

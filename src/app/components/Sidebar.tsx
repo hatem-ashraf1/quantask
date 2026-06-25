@@ -16,6 +16,7 @@ interface SidebarProps {
   onProjectChange: (projectId: string) => void;
   onCreateProject: () => void;
   onSwitchWorkspace: () => void;
+  onWorkspaceSettings: () => void;
 }
 
 const AVATAR_COLORS: Record<string, string> = {
@@ -27,11 +28,21 @@ const AVATAR_COLORS: Record<string, string> = {
   u6: '#06b6d4',
 };
 
-export function Sidebar({ currentView, selectedProjectId, onViewChange, onProjectChange, onCreateProject, onSwitchWorkspace }: SidebarProps) {
+export function Sidebar({
+  currentView,
+  selectedProjectId,
+  onViewChange,
+  onProjectChange,
+  onCreateProject,
+  onSwitchWorkspace,
+  onWorkspaceSettings,
+}: SidebarProps) {
+  // Persistent left navigation for workspace pages, project pages, and the user role badge.
   const [projectsExpanded, setProjectsExpanded] = useState(true);
   const [selectedProjectMenuOpen, setSelectedProjectMenuOpen] = useState(true);
   const [workspaceDropdownOpen, setWorkspaceDropdownOpen] = useState(false);
 
+  // Derived project and role values decide which nested navigation items are shown.
   const project = PROJECTS.find((p) => p.id === selectedProjectId);
   const canCreateProjects = canCreateProject();
   const { rolesFor } = useAuthorization();
@@ -46,6 +57,7 @@ export function Sidebar({ currentView, selectedProjectId, onViewChange, onProjec
           ? 'viewer'
           : 'workspace member';
 
+  // Helper renders top-level navigation items with a consistent active style.
   const navItem = (
     label: string,
     icon: React.ReactNode,
@@ -85,7 +97,7 @@ export function Sidebar({ currentView, selectedProjectId, onViewChange, onProjec
         fontFamily: 'var(--font-family-body)',
       }}
     >
-      {/* Workspace Selector */}
+      {/* Workspace selector: opens a tiny menu for switching back to the workspace list. */}
       <div className="px-3 py-3 border-b" style={{ borderColor: 'var(--sidebar-border)' }}>
         <button
           onClick={() => setWorkspaceDropdownOpen(!workspaceDropdownOpen)}
@@ -117,6 +129,16 @@ export function Sidebar({ currentView, selectedProjectId, onViewChange, onProjec
             <button
               onClick={() => {
                 setWorkspaceDropdownOpen(false);
+                onWorkspaceSettings();
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-[var(--sidebar-foreground)] hover:bg-[var(--sidebar)] transition-colors"
+            >
+              <Settings size={12} />
+              Workspace settings
+            </button>
+            <button
+              onClick={() => {
+                setWorkspaceDropdownOpen(false);
                 onSwitchWorkspace();
               }}
               className="w-full flex items-center gap-2 px-3 py-2 text-xs text-[var(--sidebar-foreground)] hover:bg-[var(--sidebar)] transition-colors"
@@ -141,7 +163,7 @@ export function Sidebar({ currentView, selectedProjectId, onViewChange, onProjec
         {/* Divider */}
         <div className="mx-2 my-2 border-t" style={{ borderColor: 'var(--sidebar-border)' }} />
 
-        {/* Projects */}
+        {/* Projects: choosing a project also opens the project-specific sub-navigation. */}
         <div>
           <div className="flex items-center px-3 py-1 mb-1">
             <button

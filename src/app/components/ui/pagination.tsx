@@ -1,3 +1,4 @@
+// Reusable UI primitive for Pagination; product screens import this instead of rebuilding the pattern.
 import * as React from "react";
 import {
   ChevronLeftIcon,

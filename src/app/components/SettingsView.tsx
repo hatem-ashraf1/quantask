@@ -14,10 +14,11 @@ import {
   removeProjectMember,
   transferWorkspaceOwnership,
   updateProjectMemberRole,
+  updateProject,
   updateWorkspace,
 } from '../api/client';
 import { GitHubIntegrationSection } from './GitHubIntegrationSection';
-import { canManageProjectMembers } from '../utils/permissions';
+import { canManageProject, canManageProjectMembers } from '../utils/permissions';
 
 const ROLE_LABELS: Record<User['role'], string> = {
   owner: 'Owner',
@@ -26,6 +27,7 @@ const ROLE_LABELS: Record<User['role'], string> = {
   viewer: 'Viewer',
 };
 
+// Chooses the best secondary text available for a member row.
 function secondaryMemberLabel(user: User) {
   if (user.email) return user.email;
   if (user.githubHandle?.startsWith('id:')) return `Owner ID: ${user.githubHandle.slice(3)}`;
@@ -34,6 +36,7 @@ function secondaryMemberLabel(user: User) {
 }
 
 function TransferOwnershipModal({ onClose, onTransfer }: { onClose: () => void; onTransfer: (userId: string) => Promise<void> }) {
+  // Confirmation-heavy modal because transferring ownership changes the workspace authority model.
   const [selectedUser, setSelectedUser] = useState('');
   const [confirm, setConfirm] = useState('');
   const [saving, setSaving] = useState(false);
@@ -146,6 +149,7 @@ function TransferOwnershipModal({ onClose, onTransfer }: { onClose: () => void; 
 }
 
 function DeleteWorkspaceModal({ onClose, onDelete }: { onClose: () => void; onDelete: () => Promise<void> }) {
+  // Destructive modal that requires typing the slug before permanent workspace deletion.
   const [confirm, setConfirm] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
@@ -219,6 +223,7 @@ interface SettingsViewProps {
 }
 
 export function SettingsView({ settingsType = 'workspace', projectId, onWorkspaceExited, onProjectDeleted }: SettingsViewProps) {
+  // Settings switches between workspace-wide controls and project-specific controls.
   const [name, setName] = useState(WORKSPACE.name);
   const [slug, setSlug] = useState(WORKSPACE.slug);
   const [saved, setSaved] = useState(false);
@@ -232,11 +237,18 @@ export function SettingsView({ settingsType = 'workspace', projectId, onWorkspac
   const [viewMode, setViewMode] = useState<'workspace' | 'project'>(settingsType);
   const [members, setMembers] = useState(USERS);
   const [projectMembers, setProjectMembers] = useState<User[]>([]);
+  const [projectName, setProjectName] = useState('');
+  const [projectDescription, setProjectDescription] = useState('');
+  const [projectKey, setProjectKey] = useState('');
+  const [projectSaving, setProjectSaving] = useState(false);
+  const [projectSaved, setProjectSaved] = useState(false);
+  const [projectSaveError, setProjectSaveError] = useState('');
   const [projectMemberToAdd, setProjectMemberToAdd] = useState('');
   const [projectMemberSaving, setProjectMemberSaving] = useState(false);
   const [projectRoleSavingUserId, setProjectRoleSavingUserId] = useState('');
   const [projectDeleting, setProjectDeleting] = useState(false);
   const selectedProject = projectId ? PROJECTS.find((item) => item.id === projectId) : undefined;
+  const currentUserCanManageSelectedProject = Boolean(projectId && canManageProject(projectId));
   const currentUserCanManageProjectMembers = Boolean(projectId && canManageProjectMembers(projectId));
   const addableProjectMembers = USERS.filter(
     (user) => user.role !== 'viewer' && !projectMembers.some((member) => member.id === user.id)
@@ -247,11 +259,21 @@ export function SettingsView({ settingsType = 'workspace', projectId, onWorkspac
   const currentUserCanManageWorkspace = currentUserIsOwner;
   const projectMemberRole = (user: User) => (user.id === WORKSPACE.ownerId ? 'owner' : user.role);
 
+  // Reset the visible section when the parent switches between workspace and project settings.
   useEffect(() => {
     setViewMode(settingsType);
     setActiveSection('general');
   }, [settingsType, projectId]);
 
+  useEffect(() => {
+    setProjectName(selectedProject?.name || '');
+    setProjectDescription(selectedProject?.description || '');
+    setProjectKey(selectedProject?.key || '');
+    setProjectSaved(false);
+    setProjectSaveError('');
+  }, [selectedProject?.id, selectedProject?.name, selectedProject?.description, selectedProject?.key]);
+
+  // Workspace members are loaded only when the members section is opened.
   useEffect(() => {
     if (!WORKSPACE.id || activeSection !== 'members' || viewMode !== 'workspace') return;
 
@@ -277,6 +299,7 @@ export function SettingsView({ settingsType = 'workspace', projectId, onWorkspac
     onWorkspaceExited?.();
   };
 
+  // Owners must transfer ownership before leaving; non-owners can leave directly.
   const handleLeaveWorkspace = async () => {
     setNotice('');
     if (currentUserIsOwner) {
@@ -303,6 +326,7 @@ export function SettingsView({ settingsType = 'workspace', projectId, onWorkspac
     setMembers([...USERS]);
   };
 
+  // Adds an existing workspace member to the selected project with a default developer role.
   const addProjectMember = async () => {
     if (!projectId || !projectMemberToAdd) return;
     if (!currentUserCanManageProjectMembers) {
@@ -370,6 +394,7 @@ export function SettingsView({ settingsType = 'workspace', projectId, onWorkspac
     }
   };
 
+  // Archives/deletes the selected project after permission and browser confirmation checks.
   const handleDeleteProject = async () => {
     if (!projectId || !selectedProject) return;
     if (!currentUserCanManageProjectMembers) {
@@ -391,6 +416,40 @@ export function SettingsView({ settingsType = 'workspace', projectId, onWorkspac
       setNotice(err instanceof Error ? err.message : 'Unable to archive project.');
     } finally {
       setProjectDeleting(false);
+    }
+  };
+
+  const handleProjectSave = async () => {
+    if (!projectId || !selectedProject) return;
+    if (!currentUserCanManageSelectedProject) {
+      setProjectSaveError('Only the workspace owner or this project manager can update project settings.');
+      return;
+    }
+    if (!projectName.trim()) {
+      setProjectSaveError('Project name is required.');
+      return;
+    }
+
+    setProjectSaving(true);
+    setProjectSaved(false);
+    setProjectSaveError('');
+    setNotice('');
+
+    try {
+      const updated = await updateProject(projectId, {
+        name: projectName.trim(),
+        description: projectDescription.trim(),
+        key: projectKey.trim().toUpperCase(),
+      });
+      setProjectName(updated.name);
+      setProjectDescription(updated.description || '');
+      setProjectKey(updated.key || '');
+      setProjectSaved(true);
+      setNotice('Project settings updated.');
+    } catch (err) {
+      setProjectSaveError(err instanceof Error ? err.message : 'Unable to update project settings.');
+    } finally {
+      setProjectSaving(false);
     }
   };
 
@@ -431,7 +490,7 @@ export function SettingsView({ settingsType = 'workspace', projectId, onWorkspac
 
   return (
     <div className="flex h-full overflow-hidden" style={{ fontFamily: 'var(--font-family-body)' }}>
-      {/* Settings sidebar */}
+      {/* Settings sidebar: section buttons change the form rendered in the main panel. */}
       <div
         className="w-48 flex-shrink-0 border-r p-3"
         style={{ background: 'var(--card)', borderColor: 'var(--border)' }}
@@ -469,12 +528,34 @@ export function SettingsView({ settingsType = 'workspace', projectId, onWorkspac
               <p className="text-xs text-[var(--muted-foreground)]">Manage project name, description, and configuration.</p>
             </div>
 
+            {projectSaveError && (
+              <div
+                className="rounded-lg border px-3 py-2 text-xs"
+                style={{ background: '#fef2f2', borderColor: '#fecaca', color: '#b91c1c' }}
+              >
+                {projectSaveError}
+              </div>
+            )}
+            {!currentUserCanManageSelectedProject && (
+              <div
+                className="rounded-lg border px-3 py-2 text-xs"
+                style={{ background: '#fffbeb', borderColor: '#fde68a', color: '#92400e' }}
+              >
+                Only the workspace owner or this project's manager can edit project settings.
+              </div>
+            )}
+
             <div className="space-y-4">
               <div>
                 <label className="block text-xs text-[var(--muted-foreground)] mb-1.5">Project name</label>
                 <input
                   type="text"
-                  defaultValue=""
+                  value={projectName}
+                  onChange={(e) => {
+                    setProjectName(e.target.value);
+                    setProjectSaved(false);
+                  }}
+                  disabled={!currentUserCanManageSelectedProject}
                   className="w-full px-3 py-2.5 rounded-lg border text-sm outline-none"
                   style={{ background: 'var(--input-background)', borderColor: 'var(--border)', color: 'var(--foreground)' }}
                   onFocus={(e) => (e.target.style.borderColor = 'var(--primary)')}
@@ -484,7 +565,12 @@ export function SettingsView({ settingsType = 'workspace', projectId, onWorkspac
               <div>
                 <label className="block text-xs text-[var(--muted-foreground)] mb-1.5">Description</label>
                 <textarea
-                  defaultValue=""
+                  value={projectDescription}
+                  onChange={(e) => {
+                    setProjectDescription(e.target.value);
+                    setProjectSaved(false);
+                  }}
+                  disabled={!currentUserCanManageSelectedProject}
                   rows={3}
                   className="w-full px-3 py-2.5 rounded-lg border text-sm outline-none resize-none"
                   style={{ background: 'var(--input-background)', borderColor: 'var(--border)', color: 'var(--foreground)' }}
@@ -496,7 +582,12 @@ export function SettingsView({ settingsType = 'workspace', projectId, onWorkspac
                 <label className="block text-xs text-[var(--muted-foreground)] mb-1.5">Project key</label>
                 <input
                   type="text"
-                  defaultValue=""
+                  value={projectKey}
+                  onChange={(e) => {
+                    setProjectKey(e.target.value.toUpperCase().slice(0, 5));
+                    setProjectSaved(false);
+                  }}
+                  disabled={!currentUserCanManageSelectedProject}
                   className="w-full px-3 py-2.5 rounded-lg border text-sm outline-none"
                   style={{ background: 'var(--input-background)', borderColor: 'var(--border)', color: 'var(--foreground)', fontFamily: 'var(--font-family-mono)' }}
                   onFocus={(e) => (e.target.style.borderColor = 'var(--primary)')}
@@ -505,12 +596,13 @@ export function SettingsView({ settingsType = 'workspace', projectId, onWorkspac
               </div>
 
               <button
-                onClick={handleSave}
+                onClick={handleProjectSave}
+                disabled={!currentUserCanManageSelectedProject || !projectName.trim() || projectSaving}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs text-white transition-all"
-                style={{ background: saved ? '#22c55e' : 'var(--primary)' }}
+                style={{ background: projectSaved ? '#22c55e' : 'var(--primary)' }}
               >
-                {saved ? <Check size={13} /> : <Save size={13} />}
-                {saved ? 'Saved!' : 'Save changes'}
+                {projectSaved ? <Check size={13} /> : <Save size={13} />}
+                {projectSaving ? 'Saving...' : projectSaved ? 'Saved!' : 'Save changes'}
               </button>
             </div>
           </div>

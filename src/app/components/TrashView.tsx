@@ -13,6 +13,7 @@ interface TrashViewProps {
 }
 
 export function TrashView({ onRestore }: TrashViewProps) {
+  // Trash screen lists deleted tasks and lets authorized users restore them.
   const [trashTasks, setTrashTasks] = useState<Task[]>([]);
   const [loadedTrash, setLoadedTrash] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -21,6 +22,7 @@ export function TrashView({ onRestore }: TrashViewProps) {
   const [search, setSearch] = useState('');
   const [error, setError] = useState('');
 
+  // Use backend trash once loaded; before that, fall back to local deleted tasks for immediate rendering.
   const sourceTasks = loadedTrash ? trashTasks : TASKS.filter((t) => t.isDeleted);
   const deletedTasks = sourceTasks.filter((t) => t.isDeleted && !restored.includes(t.id)).filter(
     (t) =>
@@ -28,6 +30,7 @@ export function TrashView({ onRestore }: TrashViewProps) {
       t.key.toLowerCase().includes(search.toLowerCase())
   );
 
+  // Load deleted tasks for the whole workspace on entry.
   useEffect(() => {
     if (!WORKSPACE.id) return;
 
@@ -54,6 +57,7 @@ export function TrashView({ onRestore }: TrashViewProps) {
     };
   }, [WORKSPACE.id]);
 
+  // Restore removes the item from this view immediately after the backend accepts it.
   const handleRestore = async (taskId: string) => {
     if (restoringTaskId) return;
     setError('');
@@ -77,6 +81,7 @@ export function TrashView({ onRestore }: TrashViewProps) {
     }
   };
 
+  // The last audit entry is used to display who deleted the task and when.
   const getLastActivity = (task: Task) => {
     if (task.activity.length === 0) return null;
     const last = task.activity[task.activity.length - 1];

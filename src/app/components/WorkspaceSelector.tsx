@@ -1,4 +1,4 @@
-import { Plus, Users, ChevronRight, Briefcase, Mail, Check, X } from 'lucide-react';
+import { Plus, Users, ChevronRight, Briefcase, Mail, Check, X, Bell, LogOut } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
   acceptInvitation,
@@ -14,6 +14,7 @@ import {
   PendingWorkspaceInvitation,
   RememberedWorkspace,
 } from '../api/client';
+import { NOTIFICATIONS, Notification } from '../data/store';
 
 interface Workspace {
   id: string;
@@ -26,9 +27,19 @@ interface Workspace {
 interface WorkspaceSelectorProps {
   onWorkspaceSelect: (workspaceId: string, role?: Workspace['role']) => void;
   onSessionExpired: () => void;
+  onLogout: () => void;
   initialError?: string;
 }
 
+const NOTIF_LABELS: Record<Notification['type'], string> = {
+  deadline: 'Deadline',
+  assigned: 'Assigned',
+  review: 'Review',
+  mention: 'Mention',
+  blocked: 'Blocked',
+};
+
+// Converts whatever role spelling the backend returns into the exact labels this screen displays.
 function toWorkspaceRole(role?: string): Workspace['role'] {
   const normalized = String(role || '').toLowerCase().replace(/[\s_-]/g, '');
   if (normalized === 'owner') return 'Owner';
@@ -57,6 +68,7 @@ function mapRememberedWorkspaceCard(workspace: RememberedWorkspace): Workspace {
   };
 }
 
+// Keeps recently joined workspaces visible even if the API response temporarily omits them.
 function mergeWorkspaceCards(apiWorkspaces: Workspace[]) {
   const workspaceIds = new Set(apiWorkspaces.map((workspace) => workspace.id));
   const rememberedWorkspaces = getRememberedWorkspaces()
@@ -81,7 +93,8 @@ function filterJoinableInvitations(workspaces: Workspace[], pendingInvitations: 
   return pendingInvitations.filter((invitation) => !invitation.workspaceId || !joinedWorkspaceIds.has(invitation.workspaceId));
 }
 
-export function WorkspaceSelector({ onWorkspaceSelect, onSessionExpired, initialError = '' }: WorkspaceSelectorProps) {
+export function WorkspaceSelector({ onWorkspaceSelect, onSessionExpired, onLogout, initialError = '' }: WorkspaceSelectorProps) {
+  // Entry screen after login: lists workspaces, pending invitations, and the create-workspace form.
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [invitations, setInvitations] = useState<PendingWorkspaceInvitation[]>([]);
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -91,7 +104,15 @@ export function WorkspaceSelector({ onWorkspaceSelect, onSessionExpired, initial
   const [saving, setSaving] = useState(false);
   const [processingInviteId, setProcessingInviteId] = useState('');
   const [error, setError] = useState('');
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notifications, setNotifications] = useState(NOTIFICATIONS);
 
+  const unreadNotifications = notifications.filter((notification) => !notification.read).length;
+  const markNotificationsRead = () => {
+    setNotifications((current) => current.map((notification) => ({ ...notification, read: true })));
+  };
+
+  // Load workspaces and invitations once; the active flag prevents state updates after unmount.
   useEffect(() => {
     let active = true;
 
@@ -132,6 +153,7 @@ export function WorkspaceSelector({ onWorkspaceSelect, onSessionExpired, initial
     };
   }, []);
 
+  // Re-used after accepting an invite so the UI has the latest workspace list before navigation.
   const refreshWorkspaceHome = async () => {
     const [items, pendingInvitations] = await Promise.all([fetchWorkspaces(), fetchPendingInvitations()]);
     const apiWorkspaceCards = items.map(mapWorkspaceCard);
@@ -142,6 +164,7 @@ export function WorkspaceSelector({ onWorkspaceSelect, onSessionExpired, initial
     return workspaceCards;
   };
 
+  // Accepts an invitation, remembers the workspace locally, then opens it for the user.
   const handleAcceptInvitation = async (invitation: PendingWorkspaceInvitation) => {
     const { invitationId, workspaceId } = invitation;
 
@@ -219,6 +242,7 @@ export function WorkspaceSelector({ onWorkspaceSelect, onSessionExpired, initial
     }
   };
 
+  // Creates a brand-new workspace and adds it to the list without forcing a full reload.
   const handleCreate = async () => {
     if (newWorkspaceName.trim()) {
       setSaving(true);
@@ -248,6 +272,80 @@ export function WorkspaceSelector({ onWorkspaceSelect, onSessionExpired, initial
 
   return (
     <div className="min-h-screen flex items-center justify-center p-8" style={{ background: 'var(--background)' }}>
+      <div className="fixed right-6 top-6 z-20 flex items-center gap-2">
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setNotificationsOpen((open) => !open)}
+            className="relative flex h-10 w-10 items-center justify-center rounded-lg border transition-colors hover:bg-[var(--muted)]"
+            style={{ background: 'var(--surface)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
+            title="Notifications"
+          >
+            <Bell className="h-4 w-4" />
+            {unreadNotifications > 0 && (
+              <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] text-white" style={{ background: 'var(--primary)' }}>
+                {unreadNotifications}
+              </span>
+            )}
+          </button>
+
+          {notificationsOpen && (
+            <>
+              <div className="fixed inset-0 z-20" onClick={() => setNotificationsOpen(false)} />
+              <div
+                className="absolute right-0 top-full z-30 mt-2 w-80 overflow-hidden rounded-xl border shadow-xl"
+                style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
+              >
+                <div className="flex items-center justify-between border-b px-4 py-3" style={{ borderColor: 'var(--border)' }}>
+                  <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Notifications</h2>
+                  {unreadNotifications > 0 && (
+                    <button type="button" onClick={markNotificationsRead} className="text-xs text-[var(--primary)] hover:underline">
+                      Mark all read
+                    </button>
+                  )}
+                </div>
+                <div className="max-h-80 overflow-y-auto">
+                  {notifications.length === 0 ? (
+                    <p className="px-4 py-8 text-center text-xs" style={{ color: 'var(--text-secondary)' }}>
+                      No notifications yet.
+                    </p>
+                  ) : (
+                    notifications.map((notification) => (
+                      <button
+                        key={notification.id}
+                        type="button"
+                        onClick={() => setNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, read: true } : item))}
+                        className="flex w-full items-start gap-3 border-b px-4 py-3 text-left transition-colors hover:bg-[var(--muted)]"
+                        style={{ borderColor: 'var(--border)' }}
+                      >
+                        <span className="mt-1 h-2 w-2 flex-shrink-0 rounded-full" style={{ background: notification.read ? 'var(--border)' : 'var(--primary)' }} />
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-[10px] uppercase tracking-wide" style={{ color: 'var(--text-tertiary)' }}>
+                            {NOTIF_LABELS[notification.type]}
+                          </span>
+                          <span className="mt-1 block text-xs" style={{ color: 'var(--text-primary)' }}>
+                            {notification.message}
+                          </span>
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        <button
+          type="button"
+          onClick={onLogout}
+          className="flex h-10 items-center gap-2 rounded-lg border px-3 text-xs transition-colors hover:bg-red-50"
+          style={{ background: 'var(--surface)', borderColor: 'var(--border)', color: '#dc2626' }}
+        >
+          <LogOut className="h-4 w-4" />
+          Logout
+        </button>
+      </div>
       <div className="w-full max-w-4xl">
         {/* Header */}
         <div className="text-center mb-12">

@@ -1,3 +1,4 @@
+// Reusable UI primitive for Aspect Ratio; product screens import this instead of rebuilding the pattern.
 "use client";
 
 import * as AspectRatioPrimitive from "@radix-ui/react-aspect-ratio";

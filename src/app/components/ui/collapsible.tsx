@@ -1,3 +1,4 @@
+// Reusable UI primitive for Collapsible; product screens import this instead of rebuilding the pattern.
 "use client";
 
 import * as CollapsiblePrimitive from "@radix-ui/react-collapsible";

@@ -28,6 +28,7 @@ interface AllTasksViewProps {
 }
 
 export function AllTasksView({ projectId, onTaskClick }: AllTasksViewProps) {
+  // Table-like project view for searching, filtering, and grouping every non-deleted task.
   const [filterAssignee, setFilterAssignee] = useState<string>('all');
   const [filterPriority, setFilterPriority] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
@@ -35,6 +36,7 @@ export function AllTasksView({ projectId, onTaskClick }: AllTasksViewProps) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [groupBy, setGroupBy] = useState<'status' | 'assignee' | 'priority'>('status');
 
+  // Start with project tasks, then apply each active filter in sequence.
   const allTasks = TASKS.filter((t) => t.projectId === projectId && !t.isDeleted);
 
   let displayed = allTasks;
@@ -43,7 +45,7 @@ export function AllTasksView({ projectId, onTaskClick }: AllTasksViewProps) {
   if (filterStatus !== 'all') displayed = displayed.filter((t) => t.status === filterStatus);
   if (search) displayed = displayed.filter((t) => t.title.toLowerCase().includes(search.toLowerCase()) || t.key.toLowerCase().includes(search.toLowerCase()));
 
-  // Group tasks
+  // Group tasks by the selected dimension so the same rows can be reorganized without changing task data.
   const grouped: Record<string, Task[]> = {};
   displayed.forEach((t) => {
     let key: string;
@@ -58,6 +60,7 @@ export function AllTasksView({ projectId, onTaskClick }: AllTasksViewProps) {
     grouped[key].push(t);
   });
 
+  // Turns internal IDs such as user IDs or status codes into readable group headings.
   const getGroupLabel = (key: string) => {
     if (groupBy === 'status') {
       return STATUS_CONFIG[key as keyof typeof STATUS_CONFIG]?.label || key;
@@ -72,7 +75,7 @@ export function AllTasksView({ projectId, onTaskClick }: AllTasksViewProps) {
 
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ fontFamily: 'var(--font-family-body)' }}>
-      {/* Toolbar */}
+      {/* Toolbar: search, grouping, and filters control the task rows below. */}
       <div
         className="flex items-center gap-3 px-5 py-3 border-b flex-shrink-0"
         style={{ background: 'var(--card)', borderColor: 'var(--border)' }}
