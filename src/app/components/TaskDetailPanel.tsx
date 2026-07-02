@@ -8,7 +8,7 @@ import {
 import {
   CURRENT_USER, PROJECTS, Task, TaskStatus, TASKS, USERS, SPRINTS, getUserById, getSprintById, AI_SUGGESTIONS
 } from '../data/store';
-import { addComment, addDependency, addSubTask, assignTask, deleteTask, fetchTask, getSmartAssignee, toggleSubTask, updateTaskDetails, updateTaskStatus } from '../api/client';
+import { addComment, addDependency, addSubTask, assignTask, deleteTask, fetchTask, forecastTaskWorkingHours, getSmartAssignee, toggleSubTask, updateTaskDetails, updateTaskStatus } from '../api/client';
 import {
   canAssignTask,
   canCommentOnTask,
@@ -247,6 +247,8 @@ export function TaskDetailPanel({ taskId, onClose, onUpdated, onDeleted }: TaskD
   const [panelError, setPanelError] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [smartAssigning, setSmartAssigning] = useState(false);
+  const [forecastLoading, setForecastLoading] = useState(false);
+  const [forecastHours, setForecastHours] = useState<number | null>(null);
   const [editingDetails, setEditingDetails] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
   const [editTitle, setEditTitle] = useState(initialTask?.title || '');
@@ -281,6 +283,7 @@ export function TaskDetailPanel({ taskId, onClose, onUpdated, onDeleted }: TaskD
     setEditDescription(task.description || '');
     setEditPriority(task.priority);
     setEditDueDate(task.dueDate || '');
+    setForecastHours(null);
     setEditingDetails(false);
   }, [task?.id]);
 
@@ -466,6 +469,19 @@ export function TaskDetailPanel({ taskId, onClose, onUpdated, onDeleted }: TaskD
       setPanelError(err instanceof Error ? err.message : 'Unable to smart assign this task.');
     } finally {
       setSmartAssigning(false);
+    }
+  };
+
+  const handleForecastWorkingHours = async () => {
+    setForecastLoading(true);
+    setPanelError('');
+    try {
+      const estimatedHours = await forecastTaskWorkingHours(task.id);
+      setForecastHours(estimatedHours);
+    } catch (err) {
+      setPanelError(err instanceof Error ? err.message : 'Unable to forecast working hours.');
+    } finally {
+      setForecastLoading(false);
     }
   };
 
@@ -739,6 +755,31 @@ export function TaskDetailPanel({ taskId, onClose, onUpdated, onDeleted }: TaskD
                 ) : (
                   <p className="text-sm text-[var(--foreground)] leading-relaxed">{task.description || 'No description provided.'}</p>
                 )}
+              </div>
+
+              <div
+                className="rounded-xl border p-3"
+                style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <label className="block text-xs text-[var(--muted-foreground)]">Forecast effort</label>
+                    <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+                      {forecastHours === null
+                        ? 'Estimate how many working hours this task may need.'
+                        : `Estimated working hours: ${forecastHours.toFixed(1)}h`}
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleForecastWorkingHours}
+                    disabled={forecastLoading}
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-white disabled:opacity-50"
+                    style={{ background: 'var(--ai-primary)' }}
+                  >
+                    <Sparkles size={12} />
+                    {forecastLoading ? 'Forecasting…' : 'Forecast'}
+                  </button>
+                </div>
               </div>
 
               {/* Sub-tasks */}

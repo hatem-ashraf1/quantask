@@ -414,6 +414,13 @@ type ApiSmartAssigneeResponse = {
   matchReason?: string;
 };
 
+type ApiForecastResponse = {
+  estimatedWorkingHours?: number;
+  EstimatedWorkingHours?: number;
+  estimatedHours?: number;
+  EstimatedHours?: number;
+};
+
 type CreateSprintInput = {
   projectId: string;
   name: string;
@@ -2044,6 +2051,24 @@ export async function getSmartAssignee(projectId: string, input: { taskTitle: st
     matchScore: response.matchScore ?? response.score ?? bestRecommendation?.score,
     score: response.score ?? response.matchScore ?? bestRecommendation?.score,
   };
+}
+
+export async function forecastTaskWorkingHours(taskId: string) {
+  const response = await request<ApiForecastResponse>(`/api/tasks/${taskId}/forecast`, {
+    method: 'POST',
+  });
+
+  const estimatedWorkingHours =
+    response.estimatedWorkingHours ??
+    response.EstimatedWorkingHours ??
+    response.estimatedHours ??
+    response.EstimatedHours;
+
+  if (typeof estimatedWorkingHours !== 'number') {
+    throw new Error('The forecast response did not include working hours.');
+  }
+
+  return estimatedWorkingHours;
 }
 
 export async function restoreTask(taskId: string) {
