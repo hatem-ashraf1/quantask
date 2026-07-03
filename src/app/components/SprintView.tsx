@@ -9,8 +9,8 @@ import { canManageProject } from '../utils/permissions';
 
 const STATUS_CONFIG = {
   future: { label: 'Future', color: '#6b6b82', bg: '#f6f6fa', dot: '#d1d1db' },
-  active: { label: 'Active', color: '#3b82f6', bg: '#eff6ff', dot: '#3b82f6' },
-  completed: { label: 'Completed', color: '#22c55e', bg: '#f0fdf4', dot: '#22c55e' },
+  running: { label: 'Running', color: '#3b82f6', bg: '#eff6ff', dot: '#3b82f6' },
+  past: { label: 'Past', color: '#22c55e', bg: '#f0fdf4', dot: '#22c55e' },
 };
 
 const PRIORITY_CONFIG = {
@@ -24,6 +24,29 @@ interface SprintViewProps {
   projectId: string;
   onTaskClick: (taskId: string) => void;
   onBacklogClick?: () => void;
+}
+
+type SprintTimelineStatus = keyof typeof STATUS_CONFIG;
+
+function todayDateKey() {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getSprintTimelineStatus(sprint: Sprint): SprintTimelineStatus {
+  if (!sprint.startDate || !sprint.endDate) {
+    if (sprint.status === 'active') return 'running';
+    if (sprint.status === 'completed') return 'past';
+    return 'future';
+  }
+
+  const today = todayDateKey();
+  if (today < sprint.startDate) return 'future';
+  if (today > sprint.endDate) return 'past';
+  return 'running';
 }
 
 function CreateSprintModal({
@@ -220,7 +243,8 @@ function SprintCard({
   const [savingStatus, setSavingStatus] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [statusError, setStatusError] = useState('');
-  const statusCfg = STATUS_CONFIG[sprint.status];
+  const timelineStatus = getSprintTimelineStatus(sprint);
+  const statusCfg = STATUS_CONFIG[timelineStatus];
   const sprintTasks = TASKS.filter((t) => t.sprintId === sprint.id && !t.isDeleted);
   const doneTasks = sprintTasks.filter((t) => t.status === 'Done').length;
   const progress = sprintTasks.length > 0 ? Math.round((doneTasks / sprintTasks.length) * 100) : 0;
@@ -229,14 +253,14 @@ function SprintCard({
     <div
       className="rounded-xl border overflow-hidden"
       style={{
-        borderColor: sprint.status === 'active' ? 'var(--primary)' : 'var(--border)',
+        borderColor: timelineStatus === 'running' ? 'var(--primary)' : 'var(--border)',
         background: 'var(--card)',
       }}
     >
       {/* Sprint header */}
       <div
         className="flex items-center gap-3 px-4 py-3"
-        style={{ background: sprint.status === 'active' ? 'var(--secondary)' : 'var(--card)' }}
+        style={{ background: timelineStatus === 'running' ? 'var(--secondary)' : 'var(--card)' }}
       >
         <button
           onClick={() => setExpanded(!expanded)}
@@ -461,7 +485,9 @@ export function SprintView({ projectId, onTaskClick, onBacklogClick }: SprintVie
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [, setRefreshKey] = useState(0);
   // Derived list keeps this screen scoped to the currently selected project.
-  const projectSprints = SPRINTS.filter((s) => s.projectId === projectId);
+  const projectSprints = SPRINTS
+    .filter((s) => s.projectId === projectId)
+    .sort((a, b) => a.startDate.localeCompare(b.startDate));
   const canManage = canManageProject(projectId);
 
   return (
@@ -475,7 +501,7 @@ export function SprintView({ projectId, onTaskClick, onBacklogClick }: SprintVie
           <h2 className="text-sm text-[var(--foreground)]">Sprint Planning</h2>
           <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
             {projectSprints.length} sprints ·{' '}
-            {projectSprints.filter((s) => s.status === 'active').length} active
+            {projectSprints.filter((s) => getSprintTimelineStatus(s) === 'running').length} running
           </p>
         </div>
         <button

@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
@@ -14,8 +14,11 @@ import {
   ApiError,
   connectGitHubRepository,
   getGitHubAnalytics,
+  getGitHubIngestionStatus,
+  getGitHubSyncStatus,
   GitHubAnalytics,
   GitHubConnection,
+  GitHubOperationStatus,
   syncGitHubAnalytics,
 } from '../api/client';
 import { canManageProject } from '../utils/permissions';
@@ -45,6 +48,83 @@ function githubError(error: unknown, fallback: string) {
     return 'Unable to access this repository. Check the repository name and token permissions.';
   }
   return message || fallback;
+}
+
+function normalizedStatus(status?: string) {
+  return String(status || '').toLowerCase();
+}
+
+function isGitHubSyncRunning(status?: GitHubOperationStatus | null) {
+  const normalized = normalizedStatus(status?.status);
+  return normalized === 'pending' || normalized === 'inprogress' || normalized === 'in_progress';
+}
+
+function isGitHubSyncSucceeded(status?: GitHubOperationStatus | null) {
+  const normalized = normalizedStatus(status?.status);
+  return normalized === 'success' || normalized === 'succeeded';
+}
+
+function isGitHubSyncFailed(status?: GitHubOperationStatus | null) {
+  const normalized = normalizedStatus(status?.status);
+  return normalized === 'failed' || normalized === 'invalidpat' || normalized === 'invalid_pat';
+}
+
+function isGitHubIngestionRunning(status?: GitHubOperationStatus | null) {
+  const normalized = normalizedStatus(status?.status);
+  return normalized === 'queued' || normalized === 'running';
+}
+
+function isGitHubIngestionSucceeded(status?: GitHubOperationStatus | null) {
+  return normalizedStatus(status?.status) === 'succeeded';
+}
+
+function isGitHubIngestionFailed(status?: GitHubOperationStatus | null) {
+  return normalizedStatus(status?.status) === 'failed';
+}
+
+function statusMessage(status: GitHubOperationStatus, fallback: string) {
+  return status.error || status.statusMessage || fallback;
+}
+
+function isMissingStatus(error: unknown) {
+  return error instanceof ApiError && error.status === 404;
+}
+
+function OperationStatus({
+  title,
+  status,
+  active,
+  failed,
+}: {
+  title: string;
+  status: GitHubOperationStatus;
+  active: boolean;
+  failed: boolean;
+}) {
+  const progress = Math.max(0, Math.min(100, status.progressPercent ?? 0));
+  const color = failed ? '#dc2626' : active ? 'var(--primary)' : '#16a34a';
+  const background = failed ? '#fef2f2' : active ? 'var(--secondary)' : '#f0fdf4';
+  const borderColor = failed ? '#fecaca' : active ? 'var(--border)' : '#bbf7d0';
+
+  return (
+    <div className="rounded-md border px-3 py-3 text-xs" style={{ background, borderColor }}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          {active ? <RefreshCw size={14} className="animate-spin" /> : failed ? <AlertCircle size={14} /> : <CheckCircle2 size={14} />}
+          <span className="text-[var(--foreground)]">{title}</span>
+        </div>
+        <span style={{ color }}>{status.status}</span>
+      </div>
+      <p className="mt-1.5 text-[var(--muted-foreground)]">
+        {statusMessage(status, active ? 'Synchronization is running.' : 'Synchronization status updated.')}
+      </p>
+      {(active || progress > 0) && (
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full" style={{ background: 'var(--muted)' }}>
+          <div className="h-full rounded-full transition-all" style={{ width: `${progress}%`, background: color }} />
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ConnectRepositoryDialog({
@@ -175,14 +255,32 @@ export function GitHubIntegrationSection({ projectId }: GitHubIntegrationSection
   const [connection, setConnection] = useState<GitHubConnection | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [ingesting, setIngesting] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<GitHubOperationStatus | null>(null);
+  const [ingestionStatus, setIngestionStatus] = useState<GitHubOperationStatus | null>(null);
   const [showConnect, setShowConnect] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const syncTimer = useRef<number | null>(null);
+  const ingestionTimer = useRef<number | null>(null);
+
+  const clearSyncTimer = useCallback(() => {
+    if (syncTimer.current !== null) {
+      window.clearTimeout(syncTimer.current);
+      syncTimer.current = null;
+    }
+  }, []);
+
+  const clearIngestionTimer = useCallback(() => {
+    if (ingestionTimer.current !== null) {
+      window.clearTimeout(ingestionTimer.current);
+      ingestionTimer.current = null;
+    }
+  }, []);
 
   // Loads the latest analytics snapshot; 404 simply means the project is not connected yet.
-  const loadAnalytics = async () => {
-    setLoading(true);
-    setError('');
+  const loadAnalytics = useCallback(async (showSpinner = true) => {
+    if (showSpinner) setLoading(true);
     try {
       const result = await getGitHubAnalytics(projectId);
       setAnalytics(result);
@@ -192,35 +290,129 @@ export function GitHubIntegrationSection({ projectId }: GitHubIntegrationSection
       }
       setAnalytics(null);
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
-  };
+  }, [projectId]);
+
+  const pollSyncStatus = useCallback(async (announceSuccess = false) => {
+    clearSyncTimer();
+    try {
+      const status = await getGitHubSyncStatus(projectId);
+      setSyncStatus(status);
+
+      if (isGitHubSyncRunning(status)) {
+        setSyncing(true);
+        syncTimer.current = window.setTimeout(() => {
+          void pollSyncStatus(announceSuccess);
+        }, 3000);
+        return;
+      }
+
+      setSyncing(false);
+      if (isGitHubSyncSucceeded(status)) {
+        if (announceSuccess) setMessage('GitHub analytics synced successfully.');
+        await loadAnalytics(false);
+        return;
+      }
+
+      if (isGitHubSyncFailed(status)) {
+        const invalidPat = normalizedStatus(status.status).includes('invalid');
+        setError(invalidPat
+          ? 'GitHub token is invalid. Ask a project manager to reconnect GitHub with a valid token.'
+          : statusMessage(status, 'GitHub synchronization failed.'));
+      }
+    } catch (requestError) {
+      if (isMissingStatus(requestError) && announceSuccess) {
+        setSyncing(true);
+        syncTimer.current = window.setTimeout(() => {
+          void pollSyncStatus(announceSuccess);
+        }, 3000);
+        return;
+      }
+
+      setSyncing(false);
+      if (!isMissingStatus(requestError)) setError(githubError(requestError, 'Unable to read GitHub sync status.'));
+    }
+  }, [clearSyncTimer, loadAnalytics, projectId]);
+
+  const pollIngestionStatus = useCallback(async (announceSuccess = false) => {
+    clearIngestionTimer();
+    try {
+      const status = await getGitHubIngestionStatus(projectId);
+      setIngestionStatus(status);
+
+      if (isGitHubIngestionRunning(status)) {
+        setIngesting(true);
+        ingestionTimer.current = window.setTimeout(() => {
+          void pollIngestionStatus(announceSuccess);
+        }, 3000);
+        return;
+      }
+
+      setIngesting(false);
+      if (isGitHubIngestionSucceeded(status)) {
+        if (announceSuccess) setMessage('Repository data is ready. You can sync analytics now.');
+        return;
+      }
+
+      if (isGitHubIngestionFailed(status)) {
+        setError(statusMessage(status, 'Repository ingestion failed.'));
+      }
+    } catch (requestError) {
+      if (isMissingStatus(requestError) && announceSuccess) {
+        setIngesting(true);
+        ingestionTimer.current = window.setTimeout(() => {
+          void pollIngestionStatus(announceSuccess);
+        }, 3000);
+        return;
+      }
+
+      setIngesting(false);
+      if (!isMissingStatus(requestError)) setError(githubError(requestError, 'Unable to read GitHub ingestion status.'));
+    }
+  }, [clearIngestionTimer, projectId]);
 
   useEffect(() => {
+    clearSyncTimer();
+    clearIngestionTimer();
     setConnection(null);
     setMessage('');
+    setError('');
+    setSyncStatus(null);
+    setIngestionStatus(null);
+    setSyncing(false);
+    setIngesting(false);
     void loadAnalytics();
-  }, [projectId]);
+    void pollSyncStatus(false);
+    void pollIngestionStatus(false);
+
+    return () => {
+      clearSyncTimer();
+      clearIngestionTimer();
+    };
+  }, [clearIngestionTimer, clearSyncTimer, loadAnalytics, pollIngestionStatus, pollSyncStatus, projectId]);
 
   // Explicit sync asks the backend to refresh GitHub metrics for this project.
   const sync = async () => {
+    clearSyncTimer();
     setSyncing(true);
     setMessage('');
     setError('');
     try {
-      const result = await syncGitHubAnalytics(projectId);
-      setAnalytics(result);
-      setMessage('GitHub analytics synced successfully.');
+      const status = await syncGitHubAnalytics(projectId);
+      if (status) setSyncStatus(status);
+      setMessage('GitHub synchronization started.');
+      await pollSyncStatus(true);
     } catch (requestError) {
-      setError(githubError(requestError, 'Unable to sync GitHub analytics.'));
-    } finally {
       setSyncing(false);
+      setError(githubError(requestError, 'Unable to sync GitHub analytics.'));
     }
   };
 
   const repositoryName = analytics?.repositoryFullName || connection?.repositoryFullName;
   const defaultBranch = analytics?.defaultBranch || connection?.defaultBranch;
   const lastSync = analytics?.syncedAt || connection?.lastSyncedAt;
+  const syncDisabled = syncing || ingesting;
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -254,6 +446,22 @@ export function GitHubIntegrationSection({ projectId }: GitHubIntegrationSection
           <AlertCircle size={14} />
           {error}
         </div>
+      )}
+      {ingestionStatus && (ingesting || isGitHubIngestionFailed(ingestionStatus)) && (
+        <OperationStatus
+          title="Repository ingestion"
+          status={ingestionStatus}
+          active={ingesting}
+          failed={isGitHubIngestionFailed(ingestionStatus)}
+        />
+      )}
+      {syncStatus && (syncing || isGitHubSyncFailed(syncStatus)) && (
+        <OperationStatus
+          title="GitHub synchronization"
+          status={syncStatus}
+          active={syncing}
+          failed={isGitHubSyncFailed(syncStatus)}
+        />
       )}
 
       {loading ? (
@@ -335,12 +543,12 @@ export function GitHubIntegrationSection({ projectId }: GitHubIntegrationSection
 
           {canManage && (
             <button
-              disabled={syncing}
+              disabled={syncDisabled}
               onClick={sync}
               className="flex items-center gap-2 rounded-md bg-[var(--primary)] px-4 py-2 text-xs text-white disabled:opacity-50"
             >
               <RefreshCw size={13} className={syncing ? 'animate-spin' : ''} />
-              {syncing ? 'Syncing GitHub data...' : 'Sync GitHub Analytics'}
+              {syncing ? 'Syncing GitHub data...' : ingesting ? 'Preparing repository...' : 'Sync GitHub Analytics'}
             </button>
           )}
         </>
@@ -358,8 +566,8 @@ export function GitHubIntegrationSection({ projectId }: GitHubIntegrationSection
               <button onClick={() => setShowConnect(true)} className="rounded-md border px-3 py-2 text-xs" style={{ borderColor: 'var(--border)' }}>
                 Connect Repository
               </button>
-              <button disabled={syncing} onClick={sync} className="rounded-md bg-[var(--primary)] px-3 py-2 text-xs text-white disabled:opacity-50">
-                {syncing ? 'Syncing...' : 'Try Sync'}
+              <button disabled={syncDisabled} onClick={sync} className="rounded-md bg-[var(--primary)] px-3 py-2 text-xs text-white disabled:opacity-50">
+                {syncing ? 'Syncing...' : ingesting ? 'Preparing...' : 'Try Sync'}
               </button>
             </div>
           )}
@@ -373,8 +581,9 @@ export function GitHubIntegrationSection({ projectId }: GitHubIntegrationSection
           onConnected={(result) => {
             setConnection(result);
             setAnalytics(null);
-            setMessage('GitHub repository connected. Sync it to create the first analytics snapshot.');
+            setMessage('GitHub repository connected. Preparing repository data...');
             setError('');
+            void pollIngestionStatus(true);
           }}
         />
       )}

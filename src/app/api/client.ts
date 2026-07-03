@@ -231,6 +231,16 @@ export type GitHubAnalytics = {
   syncedAt: string;
 };
 
+export type GitHubOperationStatus = {
+  projectId?: string;
+  status: string;
+  progressPercent?: number;
+  statusMessage?: string;
+  startedAt?: string;
+  completedAt?: string | null;
+  error?: string | null;
+};
+
 export type ReportStatus = 'Pending' | 'Processing' | 'Completed' | 'Failed' | 'Expired';
 
 export type CreateReportRequest = {
@@ -292,6 +302,25 @@ type ApiBoard = {
   sprints?: ApiSprint[];
   backlogTasks?: ApiTask[];
   members?: ApiProjectMember[];
+};
+
+type ApiGitHubOperationStatus = {
+  projectId?: string;
+  ProjectId?: string;
+  status?: string;
+  Status?: string;
+  progressPercent?: number;
+  ProgressPercent?: number;
+  statusMessage?: string;
+  StatusMessage?: string;
+  startedAt?: string;
+  StartedAt?: string;
+  completedAt?: string | null;
+  CompletedAt?: string | null;
+  error?: string | null;
+  Error?: string | null;
+  data?: ApiGitHubOperationStatus;
+  Data?: ApiGitHubOperationStatus;
 };
 
 type ApiTask = {
@@ -712,6 +741,25 @@ function normalizeSprintStatus(status?: string | number): Sprint['status'] {
   if (normalized === 'active') return 'active';
   if (normalized === 'completed' || normalized === 'closed') return 'completed';
   return 'future';
+}
+
+function normalizeGitHubOperationStatus(value: unknown): GitHubOperationStatus | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+
+  const raw = value as ApiGitHubOperationStatus;
+  const status = raw.status || raw.Status;
+  if (!status && (raw.data || raw.Data)) return normalizeGitHubOperationStatus(raw.data || raw.Data);
+  if (!status) return undefined;
+
+  return {
+    projectId: raw.projectId || raw.ProjectId,
+    status,
+    progressPercent: raw.progressPercent ?? raw.ProgressPercent,
+    statusMessage: raw.statusMessage || raw.StatusMessage,
+    startedAt: raw.startedAt || raw.StartedAt,
+    completedAt: raw.completedAt ?? raw.CompletedAt ?? null,
+    error: raw.error ?? raw.Error ?? null,
+  };
 }
 
 function dateOnly(value?: string | null) {
@@ -2130,9 +2178,24 @@ export async function getGitHubAnalytics(projectId: string) {
 }
 
 export async function syncGitHubAnalytics(projectId: string) {
-  return request<GitHubAnalytics>(`/api/projects/${projectId}/github/sync`, {
+  const result = await request<unknown>(`/api/projects/${projectId}/github/sync`, {
     method: 'POST',
   });
+  return normalizeGitHubOperationStatus(result);
+}
+
+export async function getGitHubSyncStatus(projectId: string) {
+  const result = await request<unknown>(`/api/projects/${projectId}/github/sync/status`);
+  const status = normalizeGitHubOperationStatus(result);
+  if (!status) throw new Error('The backend did not return a GitHub sync status.');
+  return status;
+}
+
+export async function getGitHubIngestionStatus(projectId: string) {
+  const result = await request<unknown>(`/api/projects/${projectId}/github/ingestion/status`);
+  const status = normalizeGitHubOperationStatus(result);
+  if (!status) throw new Error('The backend did not return a GitHub ingestion status.');
+  return status;
 }
 
 function readReportWorkspaceCache() {
