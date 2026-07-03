@@ -249,12 +249,14 @@ export function TaskDetailPanel({ taskId, onClose, onUpdated, onDeleted }: TaskD
   const [smartAssigning, setSmartAssigning] = useState(false);
   const [forecastLoading, setForecastLoading] = useState(false);
   const [forecastHours, setForecastHours] = useState<number | null>(null);
+  const [forecastDisplayUnit, setForecastDisplayUnit] = useState<'hours' | 'minutes'>('hours');
   const [editingDetails, setEditingDetails] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
   const [editTitle, setEditTitle] = useState(initialTask?.title || '');
   const [editDescription, setEditDescription] = useState(initialTask?.description || '');
   const [editPriority, setEditPriority] = useState<Task['priority']>(initialTask?.priority || 'medium');
   const [editDueDate, setEditDueDate] = useState(initialTask?.dueDate || '');
+  const latestTaskIdRef = useRef(taskId);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Fetch the freshest task details when the opened task changes, while using local data as a fallback.
@@ -278,14 +280,17 @@ export function TaskDetailPanel({ taskId, onClose, onUpdated, onDeleted }: TaskD
   }, [taskId]);
 
   useEffect(() => {
+    latestTaskIdRef.current = task?.id || taskId;
     if (!task) return;
     setEditTitle(task.title);
     setEditDescription(task.description || '');
     setEditPriority(task.priority);
     setEditDueDate(task.dueDate || '');
     setForecastHours(null);
+    setForecastDisplayUnit('hours');
+    setForecastLoading(false);
     setEditingDetails(false);
-  }, [task?.id]);
+  }, [task?.id, taskId]);
 
   if (!task) return null;
 
@@ -473,15 +478,21 @@ export function TaskDetailPanel({ taskId, onClose, onUpdated, onDeleted }: TaskD
   };
 
   const handleForecastWorkingHours = async () => {
+    const forecastTaskId = task.id;
+    latestTaskIdRef.current = forecastTaskId;
     setForecastLoading(true);
     setPanelError('');
     try {
-      const estimatedHours = await forecastTaskWorkingHours(task.id);
+      const estimatedHours = await forecastTaskWorkingHours(forecastTaskId);
+      if (latestTaskIdRef.current !== forecastTaskId) return;
       setForecastHours(estimatedHours);
     } catch (err) {
+      if (latestTaskIdRef.current !== forecastTaskId) return;
       setPanelError(err instanceof Error ? err.message : 'Unable to forecast working hours.');
     } finally {
-      setForecastLoading(false);
+      if (latestTaskIdRef.current === forecastTaskId) {
+        setForecastLoading(false);
+      }
     }
   };
 
@@ -555,6 +566,12 @@ export function TaskDetailPanel({ taskId, onClose, onUpdated, onDeleted }: TaskD
 
   const statusCfg = STATUS_CONFIG[task.status];
   const priorityCfg = PRIORITY_CONFIG[task.priority];
+  const forecastEstimate =
+    forecastHours === null
+      ? null
+      : forecastDisplayUnit === 'minutes'
+        ? `${Math.round(forecastHours * 60)} min`
+        : `${forecastHours.toFixed(1)}h`;
 
   return (
     <>
@@ -767,18 +784,41 @@ export function TaskDetailPanel({ taskId, onClose, onUpdated, onDeleted }: TaskD
                     <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
                       {forecastHours === null
                         ? 'Estimate how many working hours this task may need.'
-                        : `Estimated working hours: ${forecastHours.toFixed(1)}h`}
+                        : `Estimated effort: ${forecastEstimate}`}
                     </p>
                   </div>
-                  <button
-                    onClick={handleForecastWorkingHours}
-                    disabled={forecastLoading}
-                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-white disabled:opacity-50"
-                    style={{ background: 'var(--ai-primary)' }}
-                  >
-                    <Sparkles size={12} />
-                    {forecastLoading ? 'Forecasting…' : 'Forecast'}
-                  </button>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {forecastHours !== null && (
+                      <div
+                        className="flex rounded-lg border p-0.5"
+                        style={{ borderColor: 'var(--border)', background: 'var(--card)' }}
+                      >
+                        {(['hours', 'minutes'] as const).map((unit) => (
+                          <button
+                            key={unit}
+                            type="button"
+                            onClick={() => setForecastDisplayUnit(unit)}
+                            className="rounded-md px-2 py-1 text-[10px] transition-colors"
+                            style={{
+                              background: forecastDisplayUnit === unit ? 'var(--ai-bg)' : 'transparent',
+                              color: forecastDisplayUnit === unit ? 'var(--ai-primary)' : 'var(--muted-foreground)',
+                            }}
+                          >
+                            {unit === 'hours' ? 'h' : 'min'}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <button
+                      onClick={handleForecastWorkingHours}
+                      disabled={forecastLoading}
+                      className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-white disabled:opacity-50"
+                      style={{ background: 'var(--ai-primary)' }}
+                    >
+                      <Sparkles size={12} />
+                      {forecastLoading ? 'Forecasting…' : 'Forecast'}
+                    </button>
+                  </div>
                 </div>
               </div>
 
