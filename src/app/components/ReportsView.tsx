@@ -25,7 +25,6 @@ import { canViewProject } from '../utils/permissions';
 const POLL_INTERVAL_MS = 4000;
 const MAX_POLL_DURATION_MS = 3 * 60 * 1000;
 
-// Report dates may be missing while jobs are still processing.
 function formatDate(value?: string) {
   if (!value) return '—';
   return new Intl.DateTimeFormat(undefined, {
@@ -58,7 +57,6 @@ function GenerateReportDialog({
   onClose: () => void;
   onCreated: (job: ReportJob) => void;
 }) {
-  // Modal that chooses report scope, date range, and optional GitHub analytics.
   const today = new Date().toISOString().slice(0, 10);
   const [projectId, setProjectId] = useState('');
   const [fromDate, setFromDate] = useState('');
@@ -71,7 +69,6 @@ function GenerateReportDialog({
     (project) => canViewProject(project.id)
   );
 
-  // When a project is selected, check whether GitHub analytics exist so the report preview text is accurate.
   useEffect(() => {
     let active = true;
     setGitHubAvailable(false);
@@ -219,7 +216,6 @@ function GenerateReportDialog({
 }
 
 export function ReportsView() {
-  // Reports dashboard: lists generated PDFs, polls active jobs, and downloads completed files.
   const [reports, setReports] = useState<ReportJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -230,7 +226,6 @@ export function ReportsView() {
   const pollingStartedAt = useRef<number | null>(null);
   const pollingTimedOut = useRef(false);
 
-  // Derived values keep polling and chart data based on the current report list.
   const activeReports = useMemo(
     () => reports.filter((report) => report.status === 'Pending' || report.status === 'Processing'),
     [reports]
@@ -245,7 +240,6 @@ export function ReportsView() {
   const completedReports = reports.filter((report) => report.status === 'Completed').length;
   const failedReports = reports.filter((report) => report.status === 'Failed').length;
 
-  // quiet=true is used by the refresh button so the whole page does not show the initial loader again.
   const loadReports = async (quiet = false) => {
     if (quiet) setRefreshing(true);
     else setLoading(true);
@@ -264,7 +258,6 @@ export function ReportsView() {
     void loadReports();
   }, [WORKSPACE.id]);
 
-  // Poll active report jobs for a limited time, then tells the user to check back later.
   useEffect(() => {
     if (activeReports.length === 0) {
       pollingStartedAt.current = null;

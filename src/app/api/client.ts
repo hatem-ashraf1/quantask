@@ -1414,8 +1414,7 @@ export async function logoutFromBackend() {
       });
     }
   } catch {
-    // Local logout must still succeed when the refresh token is expired,
-    // revoked, or the backend logout endpoint is temporarily unavailable.
+    void 0;
   } finally {
     clearAuthSession();
   }
