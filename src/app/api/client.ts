@@ -2258,7 +2258,7 @@ export async function createWorkspaceReport(workspaceId: string, input: CreateRe
       projectId: input.projectId || null,
       fromDate: input.fromDate || null,
       toDate: input.toDate || null,
-      includeGitHub: input.includeGitHub,
+      includeGitHub: true,
     }),
   });
   rememberReportWorkspace(report.jobId, workspaceId);

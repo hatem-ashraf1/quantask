@@ -63,7 +63,6 @@ function GenerateReportDialog({
   const [projectId, setProjectId] = useState('');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState(today);
-  const [includeGitHub, setIncludeGitHub] = useState(false);
   const [githubAvailable, setGitHubAvailable] = useState(false);
   const [checkingGitHub, setCheckingGitHub] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -72,10 +71,9 @@ function GenerateReportDialog({
     (project) => canViewProject(project.id)
   );
 
-  // When a project is selected, check whether GitHub analytics exist before enabling that option.
+  // When a project is selected, check whether GitHub analytics exist so the report preview text is accurate.
   useEffect(() => {
     let active = true;
-    setIncludeGitHub(false);
     setGitHubAvailable(false);
     if (!projectId) {
       setCheckingGitHub(false);
@@ -113,7 +111,7 @@ function GenerateReportDialog({
         projectId: projectId || undefined,
         fromDate: fromDate || undefined,
         toDate: toDate || undefined,
-        includeGitHub,
+        includeGitHub: true,
       });
       onCreated(job);
       onClose();
@@ -152,10 +150,7 @@ function GenerateReportDialog({
             <span className="mb-1.5 block text-xs text-[var(--muted-foreground)]">Report scope</span>
             <select
               value={projectId}
-              onChange={(event) => {
-                setProjectId(event.target.value);
-                if (!event.target.value) setIncludeGitHub(false);
-              }}
+              onChange={(event) => setProjectId(event.target.value)}
               className="w-full rounded-md border px-3 py-2 text-sm outline-none"
               style={{ background: 'var(--input-background)', borderColor: 'var(--border)' }}
             >
@@ -192,21 +187,21 @@ function GenerateReportDialog({
           <label className={`flex items-start gap-3 rounded-md border p-3 ${!projectId ? 'opacity-60' : ''}`} style={{ borderColor: 'var(--border)' }}>
             <input
               type="checkbox"
-              disabled={!projectId || !githubAvailable || checkingGitHub}
-              checked={includeGitHub}
-              onChange={(event) => setIncludeGitHub(event.target.checked)}
+              disabled
+              checked
+              readOnly
               className="mt-0.5"
             />
             <span>
               <span className="block text-xs text-[var(--foreground)]">Include GitHub analytics</span>
               <span className="mt-0.5 block text-[10px] text-[var(--muted-foreground)]">
                 {!projectId
-                  ? 'Choose a project to include its GitHub analytics.'
+                  ? 'GitHub data is requested for every generated report.'
                   : checkingGitHub
                     ? 'Checking for a synced GitHub analytics snapshot...'
                     : githubAvailable
                       ? 'Uses the latest synced analytics snapshot for the selected project.'
-                      : 'Connect and sync a GitHub repository first to include GitHub analytics.'}
+                      : 'GitHub analytics will be requested; sync a repository first for project-level data.'}
               </span>
             </span>
           </label>
