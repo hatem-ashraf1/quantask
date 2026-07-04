@@ -443,9 +443,9 @@ export function TaskDetailPanel({ taskId, onClose, onUpdated, onDeleted }: TaskD
   const handleCommentFileSelect = (files: FileList | null) => {
     if (!files) return;
     const nextFiles = Array.from(files);
-    const oversizedFile = nextFiles.find((file) => file.size > 25 * 1024 * 1024);
+    const oversizedFile = nextFiles.find((file) => file.size > 5 * 1024 * 1024);
     if (oversizedFile) {
-      setPanelError(`${oversizedFile.name} exceeds the 25MB upload limit.`);
+      setPanelError(`${oversizedFile.name} exceeds the 5MB upload limit.`);
       return;
     }
     setCommentFiles((current) => [...current, ...nextFiles]);
@@ -1112,7 +1112,7 @@ export function TaskDetailPanel({ taskId, onClose, onUpdated, onDeleted }: TaskD
                             >
                               <Paperclip size={13} />
                             </button>
-                            <span className="text-[10px] text-[var(--muted-foreground)]">Max 25MB</span>
+                            <span className="text-[10px] text-[var(--muted-foreground)]">Max 5MB</span>
                           </div>
                           <button
                             onClick={handleAddComment}
