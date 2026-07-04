@@ -5,9 +5,11 @@ import {
   ApiError,
   createWorkspace,
   fetchPendingInvitations,
+  fetchNotifications,
   fetchWorkspaces,
   getRememberedWorkspaces,
   isUnauthorizedError,
+  markNotificationRead,
   rememberJoinedWorkspace,
   rememberWorkspaceOwner,
   rejectInvitation,
@@ -109,7 +111,15 @@ export function WorkspaceSelector({ onWorkspaceSelect, onSessionExpired, onLogou
 
   const unreadNotifications = notifications.filter((notification) => !notification.read).length;
   const markNotificationsRead = () => {
+    const unreadIds = notifications.filter((notification) => !notification.read).map((notification) => notification.id);
     setNotifications((current) => current.map((notification) => ({ ...notification, read: true })));
+    unreadIds.forEach((id) => {
+      markNotificationRead(id).catch((err) => {
+        if (!isUnauthorizedError(err)) {
+          console.warn('Unable to mark notification read.', err);
+        }
+      });
+    });
   };
 
   // Load workspaces and invitations once; the active flag prevents state updates after unmount.
@@ -126,6 +136,10 @@ export function WorkspaceSelector({ onWorkspaceSelect, onSessionExpired, onLogou
             return [];
           }),
         ]);
+        const unreadNotifications = await fetchNotifications().catch((err) => {
+          if (isUnauthorizedError(err)) throw err;
+          return NOTIFICATIONS;
+        });
 
         if (!active) return;
         const apiWorkspaceCards = items.map(mapWorkspaceCard);
@@ -133,6 +147,7 @@ export function WorkspaceSelector({ onWorkspaceSelect, onSessionExpired, onLogou
         const workspaceCards = mergeWorkspaceCards(apiWorkspaceCards);
         setWorkspaces(workspaceCards);
         setInvitations(filterJoinableInvitations(workspaceCards, pendingInvitations));
+        setNotifications(unreadNotifications);
         setError('');
       } catch (err) {
         if (!active) return;
@@ -314,7 +329,14 @@ export function WorkspaceSelector({ onWorkspaceSelect, onSessionExpired, onLogou
                       <button
                         key={notification.id}
                         type="button"
-                        onClick={() => setNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, read: true } : item))}
+                        onClick={() => {
+                          setNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, read: true } : item));
+                          markNotificationRead(notification.id).catch((err) => {
+                            if (!isUnauthorizedError(err)) {
+                              console.warn('Unable to mark notification read.', err);
+                            }
+                          });
+                        }}
                         className="flex w-full items-start gap-3 border-b px-4 py-3 text-left transition-colors hover:bg-[var(--muted)]"
                         style={{ borderColor: 'var(--border)' }}
                       >

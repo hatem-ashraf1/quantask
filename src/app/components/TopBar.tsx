@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Search, Bell, ChevronDown, CheckCircle2, Clock, AlertTriangle, X,
   User, LogOut, Settings, Shield
 } from 'lucide-react';
 import { NOTIFICATIONS, CURRENT_USER, Notification } from '../data/store';
 import { useAuthorization } from '../authorization/AuthorizationContext';
+import { fetchNotifications, isUnauthorizedError, markNotificationRead } from '../api/client';
 
 interface TopBarProps {
   title: string;
@@ -52,13 +53,44 @@ export function TopBar({ title, subtitle, onAuthClick, onNavigate }: TopBarProps
 
   const unread = notifications.filter((n) => !n.read).length;
 
+  useEffect(() => {
+    let active = true;
+
+    fetchNotifications()
+      .then((items) => {
+        if (active) setNotifications(items);
+      })
+      .catch((err) => {
+        if (!isUnauthorizedError(err)) {
+          console.warn('Unable to load notifications.', err);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // Notification reads are local UI state here; they make the badge disappear immediately.
   const markAllRead = () => {
+    const unreadIds = notifications.filter((n) => !n.read).map((n) => n.id);
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    unreadIds.forEach((id) => {
+      markNotificationRead(id).catch((err) => {
+        if (!isUnauthorizedError(err)) {
+          console.warn('Unable to mark notification read.', err);
+        }
+      });
+    });
   };
 
   const markRead = (id: string) => {
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
+    markNotificationRead(id).catch((err) => {
+      if (!isUnauthorizedError(err)) {
+        console.warn('Unable to mark notification read.', err);
+      }
+    });
   };
 
   return (

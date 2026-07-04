@@ -5,6 +5,7 @@ import {
   TASKS,
   USERS,
   WORKSPACE,
+  Notification,
   Project,
   Sprint,
   Task,
@@ -67,6 +68,21 @@ type MessageResult = {
   Success?: boolean;
   message?: string;
   Message?: string;
+};
+
+type ApiNotification = {
+  id?: string;
+  Id?: string;
+  title?: string;
+  Title?: string;
+  message?: string;
+  Message?: string;
+  actionUrl?: string | null;
+  ActionUrl?: string | null;
+  isRead?: boolean;
+  IsRead?: boolean;
+  createdAt?: string;
+  CreatedAt?: string;
 };
 
 type ApiUser = {
@@ -733,6 +749,37 @@ function normalizePriority(priority?: string | number): TaskPriority {
   if (normalized === 'high') return 'high';
   if (normalized === 'low') return 'low';
   return 'medium';
+}
+
+function notificationTypeFromTitle(title: string, message: string): Notification['type'] {
+  const text = `${title} ${message}`.toLowerCase();
+  if (text.includes('deadline') || text.includes('due')) return 'deadline';
+  if (text.includes('assign')) return 'assigned';
+  if (text.includes('review')) return 'review';
+  if (text.includes('mention')) return 'mention';
+  if (text.includes('blocked') || text.includes('dependency')) return 'blocked';
+  return 'assigned';
+}
+
+function taskIdFromActionUrl(actionUrl?: string | null) {
+  if (!actionUrl) return undefined;
+  const match = actionUrl.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  return match?.[0];
+}
+
+function mapNotification(notification: ApiNotification): Notification {
+  const title = notification.title || notification.Title || '';
+  const message = notification.message || notification.Message || title || 'Notification';
+  const actionUrl = notification.actionUrl ?? notification.ActionUrl;
+
+  return {
+    id: notification.id || notification.Id || '',
+    type: notificationTypeFromTitle(title, message),
+    message,
+    taskId: taskIdFromActionUrl(actionUrl),
+    read: notification.isRead ?? notification.IsRead ?? false,
+    timestamp: notification.createdAt || notification.CreatedAt || new Date().toISOString(),
+  };
 }
 
 function toApiTaskStatus(status: TaskStatus) {
@@ -1537,6 +1584,17 @@ export async function fetchWorkspaces() {
 export async function fetchPendingInvitations() {
   const invitations = await request<ApiPendingWorkspaceInvitation[]>('/api/workspaces/invitations/pending');
   return invitations.map(mapPendingInvitation).filter((invitation): invitation is PendingWorkspaceInvitation => Boolean(invitation));
+}
+
+export async function fetchNotifications() {
+  const notifications = await request<ApiNotification[]>('/api/notifications');
+  return notifications.map(mapNotification).filter((notification) => notification.id);
+}
+
+export async function markNotificationRead(notificationId: string) {
+  await request(`/api/notifications/${notificationId}/read`, {
+    method: 'PATCH',
+  });
 }
 
 export async function rejectInvitation(invitationId: string) {
