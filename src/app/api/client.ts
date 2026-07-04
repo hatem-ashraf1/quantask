@@ -414,6 +414,21 @@ type ApiSmartAssigneeResponse = {
   matchReason?: string;
 };
 
+export type SmartAssigneeRecommendation = {
+  developerKey: string;
+  developerId: string;
+  name: string;
+  email: string;
+  score: number;
+  rank: number;
+};
+
+function normalizeSmartAssigneeScore(score?: number) {
+  if (typeof score !== 'number' || Number.isNaN(score)) return 0;
+  const percentage = score > 0 && score <= 1 ? score * 100 : score;
+  return Math.max(0, Math.min(100, percentage));
+}
+
 type ApiForecastResponse = {
   estimatedWorkingHours?: number;
   EstimatedWorkingHours?: number;
@@ -2024,14 +2039,16 @@ export async function getSmartAssignee(projectId: string, input: { taskTitle: st
     }),
   });
 
-  const recommendations = (response.recommendations || response.Recommendations || []).map((recommendation) => ({
-    developerKey: recommendation.developerKey || recommendation.DeveloperKey || '',
-    developerId: recommendation.developerId || recommendation.DeveloperId || '',
-    name: recommendation.name || recommendation.Name || '',
-    email: recommendation.email || recommendation.Email || '',
-    score: recommendation.score ?? recommendation.Score ?? 0,
-    rank: recommendation.rank ?? recommendation.Rank ?? 0,
-  }));
+  const recommendations = (response.recommendations || response.Recommendations || [])
+    .map((recommendation, index): SmartAssigneeRecommendation => ({
+      developerKey: recommendation.developerKey || recommendation.DeveloperKey || '',
+      developerId: recommendation.developerId || recommendation.DeveloperId || '',
+      name: recommendation.name || recommendation.Name || '',
+      email: recommendation.email || recommendation.Email || '',
+      score: normalizeSmartAssigneeScore(recommendation.score ?? recommendation.Score),
+      rank: recommendation.rank ?? recommendation.Rank ?? index + 1,
+    }))
+    .sort((a, b) => a.rank - b.rank);
   const bestRecommendation = recommendations[0];
   const recommendedUserId =
     response.assigneeId ||
@@ -2047,8 +2064,8 @@ export async function getSmartAssignee(projectId: string, input: { taskTitle: st
     assigneeId: recommendedUserId || undefined,
     userId: recommendedUserId || undefined,
     recommendedUserId: recommendedUserId || undefined,
-    matchScore: response.matchScore ?? response.score ?? bestRecommendation?.score,
-    score: response.score ?? response.matchScore ?? bestRecommendation?.score,
+    matchScore: normalizeSmartAssigneeScore(response.matchScore ?? response.score ?? bestRecommendation?.score),
+    score: normalizeSmartAssigneeScore(response.score ?? response.matchScore ?? bestRecommendation?.score),
   };
 }
 

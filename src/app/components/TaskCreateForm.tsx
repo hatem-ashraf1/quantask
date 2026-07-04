@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { X, Save, Sparkles, Calendar, Flag, User2, ChevronDown } from 'lucide-react';
+import { X, Save, Sparkles, Calendar, Flag, User2, ChevronDown, CheckCircle2 } from 'lucide-react';
 import { CURRENT_USER, PROJECTS, USERS, SPRINTS } from '../data/store';
 import { getSmartAssignee } from '../api/client';
+import type { SmartAssigneeRecommendation } from '../api/client';
 import { canAssignTask, canCreateTaskInProject, canMoveTaskToSprint, canSelfAssignTask } from '../utils/permissions';
 
 interface TaskCreateFormProps {
@@ -17,6 +18,16 @@ const PRIORITY_CONFIG = {
   low: { label: 'Low', color: '#6b6b82', bg: '#f6f6fa' },
 };
 
+function findRecommendedUser(recommendation: SmartAssigneeRecommendation) {
+  return USERS.find((user) =>
+    user.id === recommendation.developerId ||
+    user.id === recommendation.developerKey ||
+    (user.email || '').toLowerCase() === recommendation.email.toLowerCase() ||
+    (user.githubHandle || '').toLowerCase() === recommendation.developerKey.toLowerCase() ||
+    (user.name || '').toLowerCase() === recommendation.name.toLowerCase()
+  );
+}
+
 export function TaskCreateForm({ projectId, onClose, onCreate }: TaskCreateFormProps) {
   // Modal form for creating a task with optional assignee, sprint, due date, and story points.
   const [title, setTitle] = useState('');
@@ -28,6 +39,7 @@ export function TaskCreateForm({ projectId, onClose, onCreate }: TaskCreateFormP
   const [storyPoints, setStoryPoints] = useState('');
   const [saving, setSaving] = useState(false);
   const [smartAssigning, setSmartAssigning] = useState(false);
+  const [smartRecommendations, setSmartRecommendations] = useState<SmartAssigneeRecommendation[]>([]);
   const [error, setError] = useState('');
 
   // Permission-derived values decide which fields the current user can actually use.
@@ -91,9 +103,22 @@ export function TaskCreateForm({ projectId, onClose, onCreate }: TaskCreateFormP
         taskTitle: title.trim(),
         taskDescription: description.trim(),
       });
+      if (suggestion.recommendations.length > 0) {
+        setSmartRecommendations(suggestion.recommendations);
+        return;
+      }
+
       const suggestedUserId = suggestion.assigneeId || suggestion.userId || suggestion.recommendedUserId;
-      if (!suggestedUserId) throw new Error('Smart assign did not return a recommended user.');
-      setAssigneeId(suggestedUserId);
+      if (!suggestedUserId) throw new Error('Smart assign did not return any recommended users.');
+      const fallbackUser = USERS.find((user) => user.id === suggestedUserId);
+      setSmartRecommendations([{
+        developerId: suggestedUserId,
+        developerKey: fallbackUser?.githubHandle || suggestedUserId,
+        name: fallbackUser?.name || '',
+        email: fallbackUser?.email || '',
+        score: suggestion.matchScore ?? suggestion.score ?? 0,
+        rank: 1,
+      }]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to smart assign this task.');
     } finally {
@@ -151,7 +176,10 @@ export function TaskCreateForm({ projectId, onClose, onCreate }: TaskCreateFormP
             <input
               type="text"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(e) => {
+                setTitle(e.target.value);
+                setSmartRecommendations([]);
+              }}
               placeholder="e.g., Implement user authentication"
               className="w-full px-4 py-2.5 rounded-lg border text-sm outline-none"
               style={{
@@ -172,7 +200,10 @@ export function TaskCreateForm({ projectId, onClose, onCreate }: TaskCreateFormP
             </label>
             <textarea
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => {
+                setDescription(e.target.value);
+                setSmartRecommendations([]);
+              }}
               placeholder="Provide details about the task..."
               rows={4}
               className="w-full px-4 py-2.5 rounded-lg border text-sm outline-none resize-none"
@@ -349,6 +380,62 @@ export function TaskCreateForm({ projectId, onClose, onCreate }: TaskCreateFormP
                 {smartAssigning ? 'Finding...' : 'Smart assign'}
               </button>
             </div>
+            {smartRecommendations.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {smartRecommendations.map((recommendation, index) => {
+                  const user = findRecommendedUser(recommendation);
+                  const userId = user?.id || recommendation.developerId || '';
+                  const isSelected = assigneeId === userId;
+                  const displayName = user?.name || recommendation.name || recommendation.email || 'Recommended developer';
+                  const displayEmail = user?.email || recommendation.email;
+                  const canSelectRecommendation = Boolean(userId);
+
+                  return (
+                    <button
+                      type="button"
+                      key={`${recommendation.rank}-${recommendation.developerId || recommendation.email || index}`}
+                      onClick={() => canSelectRecommendation && setAssigneeId(userId)}
+                      disabled={!canSelectRecommendation}
+                      className="w-full rounded-lg border px-3 py-2 text-left transition-all disabled:cursor-not-allowed disabled:opacity-60"
+                      style={{
+                        background: isSelected ? 'var(--card)' : 'rgba(255,255,255,0.55)',
+                        borderColor: isSelected || index === 0 ? 'var(--ai-primary)' : 'var(--border)',
+                      }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-[10px] text-white"
+                          style={{ background: index === 0 ? 'var(--ai-primary)' : 'var(--muted-foreground)' }}
+                        >
+                          #{recommendation.rank || index + 1}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="truncate text-xs font-medium" style={{ color: 'var(--foreground)' }}>
+                              {displayName}
+                            </span>
+                            {index === 0 && (
+                              <span className="rounded px-1.5 py-0.5 text-[10px] text-white" style={{ background: 'var(--ai-primary)' }}>
+                                Best
+                              </span>
+                            )}
+                          </div>
+                          {displayEmail && (
+                            <p className="truncate text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                              {displayEmail}
+                            </p>
+                          )}
+                        </div>
+                        <span className="text-[10px]" style={{ color: 'var(--ai-primary)', fontFamily: 'var(--font-family-mono)' }}>
+                          {Math.round(recommendation.score)}%
+                        </span>
+                        {isSelected && <CheckCircle2 size={13} style={{ color: 'var(--ai-primary)' }} />}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
 

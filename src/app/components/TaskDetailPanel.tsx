@@ -9,6 +9,7 @@ import {
   CURRENT_USER, PROJECTS, Task, TaskStatus, TASKS, USERS, SPRINTS, getUserById, getSprintById, AI_SUGGESTIONS
 } from '../data/store';
 import { addComment, addDependency, addSubTask, assignTask, deleteTask, fetchTask, forecastTaskWorkingHours, getSmartAssignee, toggleSubTask, updateTaskDetails, updateTaskStatus } from '../api/client';
+import type { SmartAssigneeRecommendation } from '../api/client';
 import {
   canAssignTask,
   canCommentOnTask,
@@ -37,6 +38,16 @@ const STATUS_CONFIG: Record<TaskStatus, { label: string; color: string; bg: stri
 const AVATAR_COLORS: Record<string, string> = {
   u1: '#5c5cf5', u2: '#22c55e', u3: '#f59e0b', u4: '#ef4444', u5: '#8b5cf6', u6: '#06b6d4',
 };
+
+function findRecommendedUser(recommendation: SmartAssigneeRecommendation) {
+  return USERS.find((user) =>
+    user.id === recommendation.developerId ||
+    user.id === recommendation.developerKey ||
+    (user.email || '').toLowerCase() === recommendation.email.toLowerCase() ||
+    (user.githubHandle || '').toLowerCase() === recommendation.developerKey.toLowerCase() ||
+    (user.name || '').toLowerCase() === recommendation.name.toLowerCase()
+  );
+}
 
 // Shared formatter for activity timestamps inside the detail panel.
 function formatTime(ts: string) {
@@ -247,6 +258,7 @@ export function TaskDetailPanel({ taskId, onClose, onUpdated, onDeleted }: TaskD
   const [panelError, setPanelError] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [smartAssigning, setSmartAssigning] = useState(false);
+  const [smartRecommendations, setSmartRecommendations] = useState<SmartAssigneeRecommendation[]>([]);
   const [forecastLoading, setForecastLoading] = useState(false);
   const [forecastHours, setForecastHours] = useState<number | null>(null);
   const [forecastDisplayUnit, setForecastDisplayUnit] = useState<'hours' | 'minutes'>('hours');
@@ -289,6 +301,7 @@ export function TaskDetailPanel({ taskId, onClose, onUpdated, onDeleted }: TaskD
     setForecastHours(null);
     setForecastDisplayUnit('hours');
     setForecastLoading(false);
+    setSmartRecommendations([]);
     setEditingDetails(false);
   }, [task?.id, taskId]);
 
@@ -465,11 +478,24 @@ export function TaskDetailPanel({ taskId, onClose, onUpdated, onDeleted }: TaskD
         taskTitle: task.title,
         taskDescription: task.description,
       });
+      if (suggestion.recommendations.length > 0) {
+        setSmartRecommendations(suggestion.recommendations);
+        return;
+      }
+
       const suggestedUserId = suggestion.assigneeId || suggestion.userId || suggestion.recommendedUserId;
       if (!suggestedUserId) {
-        throw new Error('Smart assign did not return a recommended user.');
+        throw new Error('Smart assign did not return any recommended users.');
       }
-      await handleAssign(suggestedUserId);
+      const fallbackUser = getUserById(suggestedUserId);
+      setSmartRecommendations([{
+        developerId: suggestedUserId,
+        developerKey: fallbackUser?.githubHandle || suggestedUserId,
+        name: fallbackUser?.name || '',
+        email: fallbackUser?.email || '',
+        score: suggestion.matchScore ?? suggestion.score ?? 0,
+        rank: 1,
+      }]);
     } catch (err) {
       setPanelError(err instanceof Error ? err.message : 'Unable to smart assign this task.');
     } finally {
@@ -1254,6 +1280,58 @@ export function TaskDetailPanel({ taskId, onClose, onUpdated, onDeleted }: TaskD
                     {smartAssigning ? <RotateCcw size={12} className="animate-spin" /> : <Sparkles size={12} />}
                     {smartAssigning ? 'Asking AI...' : 'Smart assign'}
                   </button>
+                )}
+                {canAssign && smartRecommendations.length > 0 && (
+                  <div className="mt-2 space-y-2">
+                    {smartRecommendations.map((recommendation, index) => {
+                      const user = findRecommendedUser(recommendation);
+                      const userId = user?.id || recommendation.developerId || '';
+                      const isSelected = task.assigneeId === userId;
+                      const displayName = user?.name || recommendation.name || recommendation.email || 'Recommended developer';
+                      const displayEmail = user?.email || recommendation.email;
+                      const canSelectRecommendation = Boolean(userId);
+
+                      return (
+                        <button
+                          type="button"
+                          key={`${recommendation.rank}-${recommendation.developerId || recommendation.email || index}`}
+                          onClick={() => canSelectRecommendation && handleAssign(userId)}
+                          disabled={!canSelectRecommendation || isSelected}
+                          className="w-full rounded-lg border px-2.5 py-2 text-left transition-all disabled:cursor-not-allowed disabled:opacity-70"
+                          style={{
+                            borderColor: isSelected || index === 0 ? 'var(--ai-primary)' : 'var(--border)',
+                            background: isSelected || index === 0 ? 'var(--ai-bg)' : 'transparent',
+                          }}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span
+                              className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[9px] text-white"
+                              style={{ background: index === 0 ? 'var(--ai-primary)' : 'var(--muted-foreground)' }}
+                            >
+                              #{recommendation.rank || index + 1}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5">
+                                <span className="truncate text-xs text-[var(--foreground)]">{displayName}</span>
+                                {index === 0 && (
+                                  <span className="rounded px-1 py-0.5 text-[9px] text-white" style={{ background: 'var(--ai-primary)' }}>
+                                    Best
+                                  </span>
+                                )}
+                              </div>
+                              {displayEmail && (
+                                <p className="truncate text-[10px] text-[var(--muted-foreground)]">{displayEmail}</p>
+                              )}
+                            </div>
+                            <span className="text-[10px]" style={{ color: 'var(--ai-primary)', fontFamily: 'var(--font-family-mono)' }}>
+                              {Math.round(recommendation.score)}%
+                            </span>
+                            {isSelected && <CheckCircle2 size={12} style={{ color: 'var(--ai-primary)' }} />}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
                 )}
                 {!assignee && canSelfAssign && !canAssign && (
                   <button
